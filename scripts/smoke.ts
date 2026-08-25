@@ -3,6 +3,9 @@
  *   pnpm smoke                    # auto-detect best provider
  *   pnpm smoke --provider=local   # force one
  */
+import { loadEnv } from "../packages/env/src/index.ts";
+loadEnv();
+
 import { createSandboxProvider, detectBestProvider, cloneRepo, type SandboxProvider } from "../packages/sandbox/src/index.ts";
 import { createLLM } from "../packages/llm/src/index.ts";
 import { createDb, describeDbTarget } from "../packages/db/src/index.ts";

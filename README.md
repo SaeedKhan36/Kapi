@@ -73,10 +73,32 @@ persisted — that one table is the bus, the audit log, and the UI feed.
 
 ## Free-tier guardrails
 
-Built in, not bolted on: per-run request/token budgets (`BudgetExceededError`
-pauses rather than silently draining a daily quota), model routing by tier (deep
-reasoning only for planning), provider failover, and sandbox idle-TTL so a
-leaked Daytona sandbox cannot quietly burn trial credit.
+Built in, not bolted on:
+
+- **Per-run budgets.** Hard caps on requests and tokens; `BudgetExceededError`
+  pauses the run instead of silently draining a daily quota.
+- **Bounded agent context.** The coding loop keeps the task brief plus a sliding
+  window of recent turns, summarising older steps. Appending every observation
+  forever makes cost grow quadratically with steps — that alone burned 833k
+  tokens in one early run.
+- **Provider failover.** Gemini → Groq → Cerebras behind one interface.
+- **Sandbox idle-TTL**, so a leaked Daytona sandbox cannot quietly burn credit.
+
+### Measured, not assumed: Gemini's free tier has no Pro
+
+Probing a real free-tier key (`pnpm tsx scripts/probe-models.ts`):
+
+| Model | Free tier |
+|---|---|
+| `gemini-3.1-pro-preview`, `gemini-pro-latest`, any Pro | **429 — no free quota at all** |
+| `gemini-3.5-flash` | works |
+| `gemini-2.5-flash`, `gemini-3-flash-preview` | works |
+| `gemini-3.1-flash-lite` | works (cheapest) |
+
+So planning runs on Flash too, not Pro. Model availability also varies per key —
+names in the public docs can 404 — so `GeminiProvider` carries an ordered
+candidate list per tier and falls through on both 404 and 429, remembering what
+worked. Run the probe script against your own key before assuming a model exists.
 
 ## Development
 

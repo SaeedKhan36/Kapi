@@ -22,6 +22,8 @@ export type CodingContext = {
 
 export type CodingResult = {
   ok: boolean;
+  /** True when the loop was cut off by the step cap rather than finishing. */
+  incomplete?: boolean;
   filesChanged: FileRef[];
   commits: string[];
   summary: string;

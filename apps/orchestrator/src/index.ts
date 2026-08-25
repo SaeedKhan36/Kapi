@@ -1,3 +1,6 @@
+import { loadEnv } from "@kapi/env";
+loadEnv();
+
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -32,7 +35,7 @@ app.get("/api/health", (c) =>
     ok: true,
     database: describeDbTarget(),
     provider: process.env.SANDBOX_PROVIDER ?? "local",
-    llmConfigured: Boolean(process.env.GEMINI_API_KEY || process.env.GROQ_API_KEY || process.env.CEREBRAS_API_KEY),
+    llmConfigured: Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GROQ_API_KEY || process.env.CEREBRAS_API_KEY),
     pushEnabled: Boolean(process.env.GITHUB_TOKEN),
     clients: hub.clientCount,
   }),

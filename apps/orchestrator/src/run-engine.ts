@@ -19,6 +19,8 @@ export type RunRequest = {
   maxConcurrency?: number;
   maxTasks?: number;
   providerName?: ProviderName;
+  /** Stop after planning, without dispatching any worker. */
+  planOnly?: boolean;
   /**
    * Called as soon as the run row exists, before any planning happens. Lets an
    * HTTP caller get its runId back immediately and follow progress over the
@@ -96,6 +98,13 @@ export class RunEngine {
       const graph = this.opts.planOverride
         ? await this.#usePlanOverride(runId, req, master)
         : await this.#plan(runId, req, provider, llm, master, baseBranch, idleTtlSeconds);
+
+      if (req.planOnly) {
+        await this.store.updateRun(runId, { status: "planned", finishedAt: new Date() });
+        this.#emit({ kind: "status", runId, status: "planned" });
+        return { runId, outcomes };
+      }
+
       await this.#schedule(runId, req, graph, provider, llm, master, outcomes, {
         baseBranch, maxConcurrency, idleTtlSeconds,
       });
@@ -241,13 +250,18 @@ export class RunEngine {
 
           await this.store.setTaskStatus(runId, task.id, outcome.ok ? "review" : "failed", {
             finishedAt: new Date(), branch: outcome.branch,
-            error: outcome.ok ? null : outcome.summary,
+            error: outcome.ok
+              ? null
+              : outcome.incomplete
+                ? `hit the step limit with ${outcome.commits.length} commit(s) on ${outcome.branch} - branch is reviewable but unfinished`
+                : outcome.summary,
           });
           await this.store.saveArtifact(runId, "worker-result", outcome, task.id);
           this.#emit({
             kind: "task", runId, taskId: task.id,
             status: outcome.ok ? "review" : "failed",
-            detail: `${outcome.filesChanged.length} file(s), ${outcome.commits.length} commit(s)`,
+            detail: `${outcome.filesChanged.length} file(s), ${outcome.commits.length} commit(s)` +
+              (outcome.incomplete ? " — cut off at step limit" : ""),
           });
         } catch (err) {
           failed.add(task.id);

@@ -67,6 +67,7 @@ export class AiderEngine implements CodingEngine {
 
     return {
       ok: res.exitCode === 0 && changed.length > 0,
+      incomplete: false,
       filesChanged: changed,
       commits,
       summary: commits[0] ?? task.title,

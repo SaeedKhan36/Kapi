@@ -10,6 +10,7 @@
     "@kapi/agent-runtime": "workspace:*",
     "@kapi/bus": "workspace:*",
     "@kapi/db": "workspace:*",
+    "@kapi/env": "workspace:*",
     "@kapi/llm": "workspace:*",
     "@kapi/protocol": "workspace:*",
     "@kapi/sandbox": "workspace:*",

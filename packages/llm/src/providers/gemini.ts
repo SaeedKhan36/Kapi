@@ -17,23 +17,51 @@ const API = "https://generativelanguage.googleapis.com/v1beta/models";
 export class GeminiProvider implements LLMProvider {
   readonly name = "gemini";
 
-  static DEFAULT_MODELS: Record<ModelTier, string> = {
-    planning: process.env.KAPI_MODEL_PLANNING ?? "gemini-3.1-pro-preview",
-    coding: process.env.KAPI_MODEL_CODING ?? "gemini-3.7-flash",
-    cheap: process.env.KAPI_MODEL_CHEAP ?? "gemini-3.7-flash",
+  /**
+   * Ordered candidates per tier. Model availability varies by key and project -
+   * a name in the public docs may 404 for a given key - so we fall through the
+   * list on NOT_FOUND and remember what worked.
+   */
+  static MODEL_CANDIDATES: Record<ModelTier, string[]> = {
+    // Pro models are deliberately absent: they carry NO free-tier quota and
+    // return 429 immediately, so listing them only adds latency before the
+    // Flash model that was always going to serve the request.
+    planning: ["gemini-3.5-flash", "gemini-3-flash-preview", "gemini-2.5-flash", "gemini-flash-latest"],
+    coding: ["gemini-3.5-flash", "gemini-3-flash-preview", "gemini-2.5-flash", "gemini-flash-latest"],
+    cheap: ["gemini-3.1-flash-lite", "gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-3.5-flash"],
   };
 
+  static DEFAULT_MODELS: Record<ModelTier, string> = {
+    planning: process.env.KAPI_MODEL_PLANNING ?? "gemini-3.5-flash",
+    coding: process.env.KAPI_MODEL_CODING ?? "gemini-3.5-flash",
+    cheap: process.env.KAPI_MODEL_CHEAP ?? "gemini-3.1-flash-lite",
+  };
+
+  /** Models proven to work for this key, so we pay the 404 probe only once. */
+  #resolved = new Map<ModelTier, string>();
+
   constructor(
-    private apiKey = process.env.GEMINI_API_KEY,
+    // Google's own SDKs read GOOGLE_API_KEY; accept either so a key pasted under
+    // the name Google documents does not silently look "unconfigured".
+    private apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
     private models = GeminiProvider.DEFAULT_MODELS,
   ) {}
 
   isAvailable() { return Boolean(this.apiKey); }
-  modelFor(tier: ModelTier = "coding") { return this.models[tier]; }
+  modelFor(tier: ModelTier = "coding") { return this.#resolved.get(tier) ?? this.models[tier]; }
+
+  /** Candidate list for a tier: the configured model first, then fallbacks. */
+  #candidates(tier: ModelTier): string[] {
+    const configured = this.models[tier];
+    const rest = GeminiProvider.MODEL_CANDIDATES[tier].filter((m) => m !== configured);
+    return [configured, ...rest];
+  }
 
   async generate(messages: LlmMessage[], opts: GenerateOptions = {}): Promise<GenerateResult> {
-    if (!this.apiKey) throw new Error("GEMINI_API_KEY is not set (get one free at aistudio.google.com/apikey)");
-    const model = this.modelFor(opts.tier ?? "coding");
+    if (!this.apiKey) {
+      throw new Error("GEMINI_API_KEY is not set (get one free at aistudio.google.com/apikey)");
+    }
+    const tier = opts.tier ?? "coding";
 
     const systemParts = [opts.system, ...messages.filter((m) => m.role === "system").map((m) => m.content)]
       .filter(Boolean).join("\n\n");
@@ -51,32 +79,64 @@ export class GeminiProvider implements LLMProvider {
     };
     if (systemParts) body.systemInstruction = { parts: [{ text: systemParts }] };
 
-    const res = await fetchWithRetry(
-      `${API}/${model}:generateContent`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-goog-api-key": this.apiKey },
-        body: JSON.stringify(body),
-        signal: opts.signal,
-      },
-      this.name,
-    );
+    const notFound: string[] = [];
+    for (const model of this.#candidates(tier)) {
+      let res: Response;
+      try {
+        res = await fetchWithRetry(
+          `${API}/${model}:generateContent`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-goog-api-key": this.apiKey },
+            body: JSON.stringify(body),
+            signal: opts.signal,
+          },
+          this.name,
+        );
+      } catch (err) {
+        // Try the next candidate when this model is unusable for THIS key -
+        // either invisible (404) or out of quota (429). Both mean "not this
+        // model", not "the request was bad".
+        if (err instanceof ModelNotAvailableError) { notFound.push(`${model} (unavailable)`); continue; }
+        if (err instanceof QuotaExceededError) { notFound.push(`${model} (quota exhausted)`); continue; }
+        throw err;
+      }
 
-    const json: any = await res.json();
-    const text = (json.candidates?.[0]?.content?.parts ?? [])
-      .map((p: any) => p.text ?? "").join("").trim();
+      const json: any = await res.json();
+      const parts = json.candidates?.[0]?.content?.parts ?? [];
+      // Thinking models return reasoning parts alongside the answer; only the
+      // answer is the completion.
+      const text = parts
+        .filter((p: any) => p?.thought !== true)
+        .map((p: any) => p.text ?? "")
+        .join("")
+        .trim();
 
-    if (!text) {
-      const reason = json.candidates?.[0]?.finishReason ?? json.promptFeedback?.blockReason ?? "unknown";
-      throw new Error(`gemini returned no text (finishReason: ${reason})`);
+      if (!text) {
+        const reason = json.candidates?.[0]?.finishReason ?? json.promptFeedback?.blockReason ?? "unknown";
+        throw new Error(
+          `gemini/${model} returned no text (finishReason: ${reason})` +
+            (reason === "MAX_TOKENS" ? " - raise maxOutputTokens; thinking models spend budget before answering" : ""),
+        );
+      }
+
+      this.#resolved.set(tier, model);
+      return {
+        text,
+        usage: {
+          inputTokens: json.usageMetadata?.promptTokenCount ?? 0,
+          outputTokens: json.usageMetadata?.candidatesTokenCount ?? 0,
+          requests: 1,
+        },
+        model,
+        provider: this.name,
+      };
     }
 
-    const usage: Usage = {
-      inputTokens: json.usageMetadata?.promptTokenCount ?? 0,
-      outputTokens: json.usageMetadata?.candidatesTokenCount ?? 0,
-      requests: 1,
-    };
-    return { text, usage, model, provider: this.name };
+    throw new QuotaExceededError(
+      this.name,
+      `no usable gemini model for tier "${tier}": ${notFound.join(", ")}`,
+    );
   }
 
   async generateStructured<T>(
@@ -127,6 +187,26 @@ export class GeminiProvider implements LLMProvider {
   }
 }
 
+/** Pulls the violated quota ids out of a Google error body for a readable message. */
+function summariseQuota(body: string): string {
+  try {
+    const parsed = JSON.parse(body);
+    const failure = (parsed.error?.details ?? []).find((d: any) => String(d["@type"]).includes("QuotaFailure"));
+    const ids = (failure?.violations ?? []).map((v: any) => v.quotaId).filter(Boolean);
+    return ids.length ? ids.join(", ") : body.slice(0, 160);
+  } catch {
+    return body.slice(0, 160);
+  }
+}
+
+/** Raised when a model name is not visible to the current API key. */
+class ModelNotAvailableError extends Error {
+  constructor(url: string) {
+    super(`model not available: ${url}`);
+    this.name = "ModelNotAvailableError";
+  }
+}
+
 /** Retries 429/5xx with exponential backoff; converts exhausted quota into a typed error. */
 async function fetchWithRetry(
   url: string,
@@ -140,6 +220,7 @@ async function fetchWithRetry(
     if (res.ok) return res;
 
     lastBody = await res.text().catch(() => "");
+    if (res.status === 404) throw new ModelNotAvailableError(url);
     const retryable = res.status === 429 || res.status >= 500;
     if (!retryable) throw new Error(`${provider} HTTP ${res.status}: ${lastBody.slice(0, 500)}`);
 
@@ -148,6 +229,10 @@ async function fetchWithRetry(
         throw new QuotaExceededError(provider, `rate limit / daily quota exhausted: ${lastBody.slice(0, 300)}`);
       }
       throw new Error(`${provider} HTTP ${res.status} after ${maxAttempts} attempts`);
+    }
+
+    if (res.status === 429 && /PerDay/i.test(lastBody)) {
+      throw new QuotaExceededError(provider, `daily quota exhausted: ${summariseQuota(lastBody)}`);
     }
 
     const retryAfter = Number(res.headers.get("retry-after"));

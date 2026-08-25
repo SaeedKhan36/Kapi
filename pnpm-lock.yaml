@@ -51,6 +51,9 @@ importers:
       '@kapi/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@kapi/env':
+        specifier: workspace:*
+        version: link:../../packages/env
       '@kapi/llm':
         specifier: workspace:*
         version: link:../../packages/llm
@@ -163,6 +166,8 @@ importers:
       postgres:
         specifier: ^3.4.5
         version: 3.4.9
+
+  packages/env: {}
 
   packages/llm:
     dependencies:

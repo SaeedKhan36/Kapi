@@ -4,6 +4,9 @@
  *   pnpm run:agent --repo=https://github.com/you/repo.git --goal="add a /health endpoint"
  *   pnpm run:agent --repo=... --goal=... --provider=local --concurrency=2 --dry-plan
  */
+import { loadEnv } from "../packages/env/src/index.ts";
+loadEnv();
+
 import { createDb, describeDbTarget } from "../packages/db/src/index.ts";
 import { createMessageBus } from "../packages/bus/src/index.ts";
 import { Store } from "../apps/orchestrator/src/store.ts";
@@ -82,8 +85,6 @@ ${C.bold("usage")}: pnpm run:agent --repo=<git-url> --goal="<what to build>"
     },
   });
 
-  if (flag("dry-plan")) process.env.KAPI_DRY_PLAN = "1";
-
   const started = Date.now();
   try {
     const { runId, outcomes } = await engine.execute({
@@ -92,6 +93,7 @@ ${C.bold("usage")}: pnpm run:agent --repo=<git-url> --goal="<what to build>"
       maxConcurrency: Number(arg("concurrency", "4")),
       maxTasks: arg("max-tasks") ? Number(arg("max-tasks")) : undefined,
       providerName: provider,
+      planOnly: flag("dry-plan"),
     });
 
     console.log(`\n${C.bold("results")} ${C.dim(`run ${runId} in ${Math.round((Date.now() - started) / 1000)}s`)}`);
