@@ -22,31 +22,77 @@ Inspired by [capy.ai](https://capy.ai), built to run on free tiers.
    └────────────────────┘          └──────────────────────────────┘
 ```
 
-
 ## Quick start
 
 ```bash
 pnpm install
 cp .env.example .env          # add GEMINI_API_KEY
 pnpm smoke                    # verify sandbox + db + llm
+```
+
+Then drive a run either way — both hit the same engine.
+
+**Dashboard** — orchestrator on `:8787`, web UI on `:3000` (Vite proxies `/api`
+and `/ws`, so the browser stays same-origin):
+
+```bash
+pnpm dev
+```
+
+**CLI**:
+
+```bash
 pnpm run:agent --repo=https://github.com/you/repo.git --goal="add a /health endpoint"
 ```
+
+No database setup is needed to start: with `DATABASE_URL` unset, the store falls
+back to embedded PGlite in `.kapi/db` and creates its tables on first run.
 
 ## What you need (all free)
 
 | Key | Where | Required? |
 |---|---|---|
 | `GEMINI_API_KEY` | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) — no credit card | **yes** |
-| `GITHUB_TOKEN` | fine-grained PAT, `contents:write` + `pull_requests:write` | only to push branches |
+| `GITHUB_TOKEN` | fine-grained PAT, `contents:write` | only to push worker branches |
 | `DAYTONA_API_KEY` | [daytona.io](https://daytona.io) — $200 trial credit | only for cloud sandboxes |
 | `DATABASE_URL` | [neon.tech](https://neon.tech) | no — falls back to embedded PGlite |
 
 `GROQ_API_KEY` and `CEREBRAS_API_KEY` are optional failover for when Gemini's
-daily quota runs out.
+daily quota runs out. Without `GITHUB_TOKEN` a run still completes — worker
+branches just stay local to their sandbox. See `.env.example` for the full list,
+including ports and the free-tier budget caps.
+
+## How a run works
+
+1. **Plan.** The master clones the repo into its own sandbox, reads it
+   read-only, and emits a `TaskGraph`: a shared contract plus tasks with
+   `dependsOn` edges, each assigned a role (`frontend`, `backend`, `database`,
+   `testing`, `infra`, `docs`, `generalist`).
+2. **Schedule.** The orchestrator walks the DAG, running every task whose
+   dependencies are terminal, up to `maxConcurrency`.
+3. **Implement.** Each worker gets a fresh sandbox, a clone on its own branch,
+   and the coding engine loop. Tasks move `pending → ready → assigned → running
+   → review | blocked | failed`.
+4. **Report.** Commits land on the worker's branch and are pushed when a
+   `GITHUB_TOKEN` is present; branches, changed files, and per-task summaries
+   come back as artifacts. Opening PRs is not automated yet — merge the branches
+   yourself.
+
+Every message crossing the bus is persisted as it goes, so the CLI output, the
+dashboard feed, and the audit log are the same data.
+
+## Repo layout
+
+```
+apps/orchestrator   HTTP + WebSocket API, run engine, DAG scheduler, store
+apps/web            TanStack Start dashboard — submit a run, watch it live
+packages/*          the interfaces below
+scripts/            run.ts (CLI) · smoke.ts · probe-models.ts · test-*.ts
+```
 
 ## Design
 
-Five interfaces, each with more than one implementation, so no vendor is load-bearing:
+Interfaces with more than one implementation, so no vendor is load-bearing:
 
 | Package | Interface | Implementations |
 |---|---|---|
@@ -55,6 +101,11 @@ Five interfaces, each with more than one implementation, so no vendor is load-be
 | `packages/agent-engine` | `CodingEngine` | `direct` (built-in), `aider` |
 | `packages/bus` | `MessageBus` | in-process, Redis |
 | `packages/db` | Drizzle schema | PGlite, Postgres/Neon |
+
+The rest are plumbing: `packages/protocol` (zod wire types — messages, task
+graph, shared contract), `packages/agent-runtime` (master planner and repo
+context), `packages/env` (dependency-free `.env` loader that never clobbers real
+deployment config).
 
 ### Two ideas worth knowing
 
@@ -70,6 +121,40 @@ inbound, so every agent opens an outbound connection. Worker→worker messages a
 routed directly without the master relaying them, while the master keeps a
 wildcard subscription so it still observes everything. Every message is
 persisted — that one table is the bus, the audit log, and the UI feed.
+
+## API
+
+The orchestrator (`pnpm dev:api`, default `:8787`) is what the dashboard talks
+to, and it is a plain HTTP + WebSocket surface you can drive yourself.
+
+| Route | Does |
+|---|---|
+| `GET /api/health` | db target, sandbox provider, whether an LLM key and `GITHUB_TOKEN` are configured |
+| `GET /api/runs` | every run |
+| `GET /api/runs/:id` | one run with its tasks, agents, messages, artifacts |
+| `POST /api/runs` | start a run — `{ goal, repoUrl, baseBranch?, maxConcurrency?, maxTasks?, providerName? }` |
+| `WS /ws?runId=…` | live `status` / `plan` / `task` / `message` events |
+
+`POST /api/runs` returns `202 { runId }` as soon as the run row exists rather
+than holding the request open for the minutes a run takes; follow the rest over
+the websocket. Connecting mid-run replays recent events, and omitting `runId`
+subscribes to everything.
+
+## CLI
+
+```
+pnpm run:agent --repo=<git-url> --goal="<what to build>"
+
+  --provider=local|docker|daytona   sandbox backend (default: $SANDBOX_PROVIDER or local)
+  --branch=main                     base branch
+  --concurrency=4                   max parallel workers
+  --max-tasks=6                     cap the plan size
+  --dry-plan                        plan only, do not run workers
+```
+
+`--dry-plan` costs one or two LLM requests and prints the task graph and shared
+contract — the cheapest way to see what the master intends before spending
+quota on workers.
 
 ## Free-tier guardrails
 
@@ -111,7 +196,22 @@ roughly 15–20 requests, so expect about four to six runs per day per key.
 ## Development
 
 ```bash
-pnpm test:unit      # graph validation, bus routing, scheduler — no API key needed
-pnpm smoke          # end-to-end provider check
+pnpm test:unit      # graph validation, bus routing, scheduler, model rotation — no API key needed
+pnpm smoke          # end-to-end provider check (add --provider=local to force one)
 pnpm typecheck
 ```
+
+```bash
+pnpm dev:api        # orchestrator only, watch mode
+pnpm dev:web        # dashboard only (expects the API on :8787)
+pnpm db:push        # push the Drizzle schema — real Postgres only; PGlite self-creates
+pnpm db:studio      # browse runs, tasks, and the message log
+```
+
+Requires Node 22+ and pnpm 10.
+
+## Status
+
+Early. It plans, runs workers in parallel, commits, and pushes branches. It does
+not yet open pull requests, merge worker branches into the integration branch, or
+resume an interrupted run.
