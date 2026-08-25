@@ -97,8 +97,16 @@ Probing a real free-tier key (`pnpm tsx scripts/probe-models.ts`):
 
 So planning runs on Flash too, not Pro. Model availability also varies per key —
 names in the public docs can 404 — so `GeminiProvider` carries an ordered
-candidate list per tier and falls through on both 404 and 429, remembering what
-worked. Run the probe script against your own key before assuming a model exists.
+candidate list per tier and falls through on both 404 and 429. Run the probe
+script against your own key before assuming a model exists.
+
+**The cap is per model, not per project.** A real key reports
+`GenerateRequestsPerDayPerProjectPerModel-FreeTier=20` — twenty requests per day
+*for each model*. Pinning every call to the best model would spend a twentieth
+of the day's capacity per request while its siblings sit idle, so the provider
+round-robins across healthy models and drops exhausted ones to the back. That
+turns ~20 requests/day into ~80. Budget accordingly: one run of this system costs
+roughly 15–20 requests, so expect about four to six runs per day per key.
 
 ## Development
 

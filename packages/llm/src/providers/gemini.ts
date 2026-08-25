@@ -37,8 +37,10 @@ export class GeminiProvider implements LLMProvider {
     cheap: process.env.KAPI_MODEL_CHEAP ?? "gemini-3.1-flash-lite",
   };
 
-  /** Models proven to work for this key, so we pay the 404 probe only once. */
-  #resolved = new Map<ModelTier, string>();
+  /** Models known to be out of quota or invisible, so we stop paying to retry them. */
+  #exhausted = new Set<string>();
+  /** Round-robin cursor per tier. */
+  #cursor = new Map<ModelTier, number>();
 
   constructor(
     // Google's own SDKs read GOOGLE_API_KEY; accept either so a key pasted under
@@ -48,14 +50,32 @@ export class GeminiProvider implements LLMProvider {
   ) {}
 
   isAvailable() { return Boolean(this.apiKey); }
-  modelFor(tier: ModelTier = "coding") { return this.#resolved.get(tier) ?? this.models[tier]; }
+  modelFor(tier: ModelTier = "coding") { return this.models[tier]; }
 
-  /** Candidate list for a tier: the configured model first, then fallbacks. */
+  /**
+   * Candidates for a tier, rotated.
+   *
+   * The free tier caps requests PER MODEL PER DAY (20 on a real key we probed),
+   * not per project. Pinning every call to the best model therefore burns
+   * through a twentieth of the day's capacity per request, while sibling models
+   * sit unused. Round-robin multiplies usable quota by the number of models,
+   * and models already known to be exhausted go last rather than being retried.
+   */
   #candidates(tier: ModelTier): string[] {
     const configured = this.models[tier];
-    const rest = GeminiProvider.MODEL_CANDIDATES[tier].filter((m) => m !== configured);
-    return [configured, ...rest];
+    const all = [configured, ...GeminiProvider.MODEL_CANDIDATES[tier].filter((m) => m !== configured)];
+
+    const healthy = all.filter((m) => !this.#exhausted.has(m));
+    const spent = all.filter((m) => this.#exhausted.has(m));
+    if (healthy.length === 0) return spent;
+
+    const i = (this.#cursor.get(tier) ?? 0) % healthy.length;
+    this.#cursor.set(tier, i + 1);
+    return [...healthy.slice(i), ...healthy.slice(0, i), ...spent];
   }
+
+  /** Models this key has exhausted in this process, for reporting. */
+  get exhaustedModels(): string[] { return [...this.#exhausted]; }
 
   async generate(messages: LlmMessage[], opts: GenerateOptions = {}): Promise<GenerateResult> {
     if (!this.apiKey) {
@@ -97,8 +117,16 @@ export class GeminiProvider implements LLMProvider {
         // Try the next candidate when this model is unusable for THIS key -
         // either invisible (404) or out of quota (429). Both mean "not this
         // model", not "the request was bad".
-        if (err instanceof ModelNotAvailableError) { notFound.push(`${model} (unavailable)`); continue; }
-        if (err instanceof QuotaExceededError) { notFound.push(`${model} (quota exhausted)`); continue; }
+        if (err instanceof ModelNotAvailableError) {
+          this.#exhausted.add(model);
+          notFound.push(`${model} (unavailable)`);
+          continue;
+        }
+        if (err instanceof QuotaExceededError) {
+          this.#exhausted.add(model);
+          notFound.push(`${model} (quota exhausted)`);
+          continue;
+        }
         throw err;
       }
 
@@ -120,7 +148,6 @@ export class GeminiProvider implements LLMProvider {
         );
       }
 
-      this.#resolved.set(tier, model);
       return {
         text,
         usage: {

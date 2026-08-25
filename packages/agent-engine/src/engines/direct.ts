@@ -125,6 +125,7 @@ export class DirectEngine implements CodingEngine {
 
     let summary = "";
     let finished = false;
+    let aborted: string | null = null;
     const turns: Turn[] = [];
     const keepFull = this.opts.keepFullTurns ?? 6;
 
@@ -153,7 +154,8 @@ export class DirectEngine implements CodingEngine {
         });
         call = value;
       } catch (err) {
-        say(`[engine] could not obtain a valid tool call: ${err instanceof Error ? err.message : String(err)}`);
+        aborted = err instanceof Error ? err.message : String(err);
+        say(`[engine] aborted at step ${i}: ${aborted}`);
         break;
       }
 
@@ -231,8 +233,12 @@ export class DirectEngine implements CodingEngine {
     }
 
     if (!finished) {
-      say(`[engine] stopped after ${maxIterations} iterations without finishing`);
-      summary ||= `Reached the ${maxIterations}-step limit before completing "${task.title}".`;
+      if (aborted) {
+        summary ||= `Stopped after ${turns.length} step(s) on "${task.title}": ${aborted}`;
+      } else {
+        say(`[engine] hit the ${maxIterations}-step limit without finishing`);
+        summary ||= `Reached the ${maxIterations}-step limit before completing "${task.title}".`;
+      }
     }
 
     await commitAll(provider, sandboxId, cwd, `${task.title}\n\n${summary}`.trim());
