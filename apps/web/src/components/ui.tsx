@@ -1,8 +1,13 @@
-import type { ReactNode, ButtonHTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
+import type {
+  ReactNode, ButtonHTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes, HTMLAttributes,
+} from "react";
 import { cn } from "~/lib/cn.ts";
 
-export const Card = ({ className, children }: { className?: string; children: ReactNode }) => (
-  <div className={cn("rounded-xl border border-line/60 bg-surface/70 backdrop-blur", className)}>{children}</div>
+export const Card = ({ className, children, ...props }:
+  HTMLAttributes<HTMLDivElement> & { children: ReactNode }) => (
+  <div className={cn("rounded-xl border border-line/60 bg-surface/70 backdrop-blur", className)} {...props}>
+    {children}
+  </div>
 );
 
 export const Button = ({ className, variant = "solid", ...props }:
