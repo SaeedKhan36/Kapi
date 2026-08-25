@@ -6,3 +6,7 @@ dist/
 .kapi/
 .DS_Store
 .turbo/
+.output/
+.tanstack/
+apps/web/dist/
+apps/web/src/routeTree.gen.ts

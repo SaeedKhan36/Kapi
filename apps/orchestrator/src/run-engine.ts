@@ -19,6 +19,12 @@ export type RunRequest = {
   maxConcurrency?: number;
   maxTasks?: number;
   providerName?: ProviderName;
+  /**
+   * Called as soon as the run row exists, before any planning happens. Lets an
+   * HTTP caller get its runId back immediately and follow progress over the
+   * websocket instead of holding a request open for minutes.
+   */
+  onStart?: (runId: string) => void;
 };
 
 export type RunEvent =
@@ -65,6 +71,7 @@ export class RunEngine {
       id: runId, goal: req.goal, repoUrl: req.repoUrl, baseBranch,
       integrationBranch: integrationBranch(runId), sandboxProvider: provider.name,
     });
+    req.onStart?.(runId);
 
     // Persist every message that crosses the bus, for audit and for the UI.
     const unsubscribe = this.bus.subscribeAll(runId, (m) => {
