@@ -119,9 +119,13 @@ ${C.bold("usage")}: pnpm run:agent --repo=<git-url> --goal="<what to build>"
 
     console.log(`\n${C.bold("results")} ${C.dim(`run ${runId} in ${Math.round((Date.now() - started) / 1000)}s`)}`);
     for (const [taskId, o] of outcomes) {
-      console.log(`  ${o.ok ? C.green("ok  ") : C.red("fail")} ${taskId}`);
-      console.log(C.dim(`       branch: ${o.branch}${o.pushed ? " (pushed)" : " (local only)"}`));
-      console.log(C.dim(`       files:  ${o.filesChanged.map((f) => f.path).join(", ") || "none"}`));
+      const noop = o.ok && o.commits.length === 0;
+      const label = noop ? C.cyan("noop") : o.ok ? C.green("ok  ") : C.red("fail");
+      console.log(`  ${label} ${taskId}${noop ? C.dim("  (nothing to change)") : ""}`);
+      if (!noop) {
+        console.log(C.dim(`       branch: ${o.branch}${o.pushed ? " (pushed)" : " (local only)"}`));
+        console.log(C.dim(`       files:  ${o.filesChanged.map((f) => f.path).join(", ") || "none"}`));
+      }
       console.log(C.dim(`       ${o.summary.split("\n")[0]}`));
       if (o.review) {
         const approved = o.review.decision === "approve";
