@@ -11,7 +11,7 @@ import { createDb, describeDbTarget } from "@kapi/db";
 import { createMessageBus } from "@kapi/bus";
 import {
   createRepoAccess, githubAppConfigured, listBranches, listRepositories,
-  parseRepoUrl, WorkOSError,
+  parseRepoUrl, IdentityError,
 } from "@kapi/identity";
 import { Store } from "./store.ts";
 import { RunEngine, RunNotAuthorizedError } from "./run-engine.ts";
@@ -59,13 +59,19 @@ app.use("/api/*", auth.middleware);
 
 app.get("/api/me", async (c) => {
   const user = c.get("user");
-  const connected = auth.workos
-    ? await auth.workos.isGithubConnected(user.id, user.organizationId)
+  const connected = auth.identity
+    ? await auth.identity.isGithubConnected(user.id, user.organizationId)
     : Boolean(process.env.GITHUB_TOKEN);
 
   return c.json({
     user,
-    github: { connected, connectUrl: "/api/github/connect" },
+    github: {
+      connected,
+      connectUrl: "/api/github/connect",
+      // Clerk collects the grant in its own account UI, so the dashboard opens
+      // that in place rather than navigating away to a server route.
+      inApp: auth.identity?.name === "clerk",
+    },
     githubApp: githubAppConfigured(),
   });
 });
@@ -74,14 +80,23 @@ app.get("/api/me", async (c) => {
 
 /** Starts (or repairs) the user's GitHub connection. */
 app.get("/api/github/connect", async (c) => {
-  if (!auth.workos) return c.json({ error: "GitHub connection requires WorkOS" }, 501);
+  if (!auth.identity) return c.json({ error: "GitHub connection requires a login provider" }, 501);
   const user = c.get("user");
   try {
-    return c.redirect(await auth.workos.githubAuthorizationUrl({
+    const url = await auth.identity.githubAuthorizationUrl({
       userId: user.id,
       organizationId: user.organizationId,
       returnTo: c.req.query("returnTo"),
-    }));
+    });
+    // Null means the provider owns the flow client-side; say so rather than
+    // redirecting the browser somewhere that cannot finish it.
+    if (!url) {
+      return c.json({
+        error: "Connect GitHub from your account settings.",
+        code: "GITHUB_CONNECT_IN_APP",
+      }, 400);
+    }
+    return c.redirect(url);
   } catch (err) {
     return githubError(c, err);
   }
@@ -191,17 +206,17 @@ app.post("/api/runs", async (c) => {
 /** The caller's own GitHub token, for reads the orchestrator makes on their behalf. */
 async function userToken(c: Context<AuthedEnv>): Promise<string> {
   const user = c.get("user");
-  if (!auth.workos) {
+  if (!auth.identity) {
     const pat = process.env.GITHUB_TOKEN;
-    if (!pat) throw new WorkOSError("Set GITHUB_TOKEN to browse repositories.", 401, "GITHUB_NOT_CONNECTED");
+    if (!pat) throw new IdentityError("Set GITHUB_TOKEN to browse repositories.", 401, "GITHUB_NOT_CONNECTED");
     return pat;
   }
-  return auth.workos.githubTokenFor(user.id, user.organizationId);
+  return auth.identity.githubTokenFor(user.id, user.organizationId);
 }
 
-/** Turns a GitHub or WorkOS failure into a response the UI can act on. */
+/** Turns a GitHub or login-provider failure into a response the UI can act on. */
 function githubError(c: Context<AuthedEnv>, err: unknown) {
-  if (err instanceof WorkOSError) {
+  if (err instanceof IdentityError) {
     return c.json({ error: err.message, code: err.code }, err.status as ContentfulStatusCode);
   }
   return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);

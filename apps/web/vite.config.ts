@@ -7,6 +7,13 @@ import tailwindcss from "@tailwindcss/vite";
 const ORCHESTRATOR_PORT = process.env.ORCHESTRATOR_PORT ?? "8787";
 
 export default defineConfig({
+  // The repo keeps one .env at its root, and the dashboard needs the Clerk
+  // publishable key out of it. Naming the key in `envPrefix` exposes exactly
+  // that one variable to the client - CLERK_SECRET_KEY matches no prefix here
+  // and so can never be bundled.
+  envDir: fileURLToPath(new URL("../..", import.meta.url)),
+  envPrefix: ["VITE_", "CLERK_PUBLISHABLE_KEY"],
+
   // tsconfig `paths` only informs the type checker; Vite needs its own alias.
   resolve: {
     alias: { "~": fileURLToPath(new URL("./src", import.meta.url)) },

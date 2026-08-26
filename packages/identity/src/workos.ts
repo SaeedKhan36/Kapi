@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { IdentityError, type SessionProvider, type SessionUser } from "./session.ts";
 
 /**
  * WorkOS AuthKit, reduced to the two things the orchestrator needs: verifying
@@ -10,9 +11,9 @@ import { createRemoteJWKSet, jwtVerify } from "jose";
  */
 const WORKOS_API = "https://api.workos.com";
 
-export class WorkOSError extends Error {
-  constructor(message: string, readonly status = 500, readonly code?: string) {
-    super(message);
+export class WorkOSError extends IdentityError {
+  constructor(message: string, status = 500, code?: string) {
+    super(message, status, code);
     this.name = "WorkOSError";
   }
 }
@@ -26,12 +27,8 @@ export function readWorkOSConfig(env: NodeJS.ProcessEnv = process.env): WorkOSCo
   return { clientId, apiKey };
 }
 
-export type WorkOSUser = {
-  id: string;
-  email?: string;
-  name?: string;
-  organizationId?: string;
-};
+/** The session shape is provider-agnostic; this alias is kept for readability. */
+export type WorkOSUser = SessionUser;
 
 /**
  * AuthKit signs with one of two issuers depending on how the session was
@@ -44,7 +41,9 @@ const issuersFor = (clientId: string) => [
   `${WORKOS_API}/user_management/${clientId}`,
 ];
 
-export class WorkOSAuth {
+export class WorkOSAuth implements SessionProvider {
+  readonly name = "workos";
+
   #jwks: ReturnType<typeof createRemoteJWKSet>;
   #verified = new Map<string, { user: WorkOSUser; expiresAt: number }>();
 

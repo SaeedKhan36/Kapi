@@ -9,20 +9,20 @@
     "start": "node .output/server/index.mjs"
   },
   "dependencies": {
+    "@clerk/react": "^6.14.7",
     "@tanstack/react-router": "^1.170.32",
     "@tanstack/react-start": "^1.168.49",
-    "@workos-inc/authkit-react": "^0.16.2",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.34.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "^6.1.0",
-    "clsx": "^2.1.1",
-    "lucide-react": "^1.34.0",
-    "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.3",
     "vite": "^8.2.2"
   }

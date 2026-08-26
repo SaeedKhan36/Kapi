@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
+import { Check, Lock, Search } from "lucide-react";
 import { api, ApiError, type Authorization, type Branch, type Repository } from "~/lib/api.ts";
-import { Button, Input, Spinner } from "./ui.tsx";
+import { cn } from "~/lib/cn.ts";
+import { useOpenAccount } from "./auth.tsx";
+import { Button, Input, Notice, Select, Spinner } from "./ui.tsx";
 
 export type RepoSelection = { repoUrl: string; baseBranch: string };
 
@@ -31,6 +34,7 @@ export function RepoPicker({
   const [needsConnect, setNeedsConnect] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const openAccount = useOpenAccount();
 
   useEffect(() => {
     api.listRepos()
@@ -61,17 +65,27 @@ export function RepoPicker({
 
   if (needsConnect) {
     return (
-      <div className="rounded-lg border border-line/60 bg-ink/40 p-4 text-sm">
-        <p className="text-muted">Connect GitHub to choose a repository.</p>
-        <a href={connectUrl ?? "/api/github/connect"}>
-          <Button className="mt-3" type="button">Connect GitHub</Button>
-        </a>
+      <div className="rounded-lg border border-line/60 bg-well/40 p-5 text-center">
+        <p className="text-sm text-muted">Connect GitHub to choose a repository.</p>
+        {/* Clerk collects the grant in its own account panel; WorkOS hands back
+            a URL to redirect to. Offer whichever this deployment has. */}
+        {openAccount ? (
+          <Button type="button" className="mt-3" onClick={openAccount}>Connect GitHub</Button>
+        ) : (
+          <a href={connectUrl ?? "/api/github/connect"} className="mt-3 inline-block">
+            <Button type="button">Connect GitHub</Button>
+          </a>
+        )}
       </div>
     );
   }
 
   if (repos === null) {
-    return <div className="flex items-center gap-2 py-2 text-sm text-muted"><Spinner /> Loading repositories…</div>;
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-line/50 bg-well/30 px-3 py-3 text-sm text-dim">
+        <Spinner /> Loading repositories…
+      </div>
+    );
   }
 
   // No listing available - fall back to what kapi has always accepted.
@@ -84,7 +98,7 @@ export function RepoPicker({
           value={value.repoUrl}
           onChange={(e) => onChange({ ...value, repoUrl: e.target.value })}
         />
-        <p className="text-xs text-amber-400/80">{error}</p>
+        <p className="text-xs text-warn/90">{error}</p>
       </div>
     );
   }
@@ -95,70 +109,86 @@ export function RepoPicker({
 
   return (
     <div className="space-y-3">
-      <Input
-        placeholder="Filter repositories…"
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-      />
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-dim" />
+        <Input
+          className="pl-9"
+          placeholder="Search repositories…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      </div>
 
-      <div className="max-h-52 overflow-y-auto rounded-lg border border-line/60">
-        {visible.slice(0, 100).map((repo) => (
-          <button
-            key={repo.id}
-            type="button"
-            onClick={() => void select(repo)}
-            className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition hover:bg-line/20 ${
-              selected?.id === repo.id ? "bg-line/30" : ""
-            }`}
-          >
-            <span className="truncate">{repo.fullName}</span>
-            {repo.private && <span className="text-[10px] uppercase text-muted">private</span>}
-          </button>
-        ))}
+      <div className="max-h-56 divide-y divide-line/25 overflow-y-auto rounded-lg border border-line/60 bg-well/30">
+        {visible.slice(0, 100).map((repo) => {
+          const active = selected?.id === repo.id;
+          return (
+            <button
+              key={repo.id}
+              type="button"
+              onClick={() => void select(repo)}
+              className={cn(
+                "flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors",
+                active ? "bg-accent/10 text-bright" : "text-muted hover:bg-raised/40 hover:text-bright",
+              )}
+            >
+              <span className="truncate">
+                <span className="text-dim">{repo.owner}/</span>
+                <span className="font-medium">{repo.name}</span>
+              </span>
+              {repo.private && <Lock className="size-3 shrink-0 text-dim" />}
+              {active && <Check className="ml-auto size-3.5 shrink-0 text-accent" />}
+            </button>
+          );
+        })}
         {visible.length === 0 && (
-          <p className="px-3 py-4 text-sm text-muted">No repositories match “{filter}”.</p>
+          <p className="px-3 py-6 text-center text-sm text-dim">No repositories match “{filter}”.</p>
         )}
       </div>
 
       {selected && (
         <div className="space-y-2">
-          <label className="block text-xs text-muted">Base branch</label>
           {branches === null ? (
-            <div className="flex items-center gap-2 text-sm text-muted"><Spinner /> Loading branches…</div>
+            <div className="flex items-center gap-2 text-xs text-dim"><Spinner /> Loading branches…</div>
           ) : (
-            <select
-              value={value.baseBranch}
-              onChange={(e) => onChange({ ...value, baseBranch: e.target.value })}
-              className="w-full rounded-lg border border-line/60 bg-ink/60 px-3 py-2 text-sm"
-            >
-              {branches.map((b) => (
-                <option key={b.name} value={b.name}>
-                  {b.name}{b.protected ? " (protected)" : ""}
-                </option>
-              ))}
-            </select>
+            <label className="flex items-center gap-2">
+              <span className="text-xs text-dim">Base branch</span>
+              <Select
+                className="h-9 flex-1"
+                value={value.baseBranch}
+                onChange={(e) => onChange({ ...value, baseBranch: e.target.value })}
+              >
+                {branches.map((b) => (
+                  <option key={b.name} value={b.name}>
+                    {b.name}{b.protected ? " (protected)" : ""}
+                  </option>
+                ))}
+              </Select>
+            </label>
           )}
 
           {authorization && !authorization.ok && (
-            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-              <p className="text-amber-200">{authorization.reason}</p>
+            <Notice tone="warn">
+              <p>{authorization.reason}</p>
               {authorization.installUrl && (
                 <a
                   href={authorization.installUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-2 inline-block text-xs font-medium text-amber-300 underline"
+                  className="mt-1 inline-block text-xs font-medium underline"
                 >
                   {authorization.action === "configure"
                     ? "Add this repository to the kapi app →"
                     : "Install the kapi app →"}
                 </a>
               )}
-            </div>
+            </Notice>
           )}
 
           {authorization?.ok && (
-            <p className="text-xs text-emerald-400/80">kapi can push to this repository.</p>
+            <p className="flex items-center gap-1.5 text-xs text-ok">
+              <Check className="size-3.5" /> kapi can push to this repository.
+            </p>
           )}
         </div>
       )}

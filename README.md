@@ -33,7 +33,8 @@ pnpm smoke                    # verify sandbox + db + llm
 Then drive a run either way — both hit the same engine.
 
 **Dashboard** — orchestrator on `:8787`, web UI on `:3000` (Vite proxies `/api`
-and `/ws`, so the browser stays same-origin):
+and `/ws`, so the browser stays same-origin). `/` is the landing page; the
+dashboard lives at `/app`, behind Clerk when Clerk is configured:
 
 ```bash
 pnpm dev
@@ -56,7 +57,7 @@ back to embedded PGlite in `.kapi/db` and creates its tables on first run.
 | `GITHUB_TOKEN` | fine-grained PAT, `contents:write` | only to push worker branches |
 | `DAYTONA_API_KEY` | [daytona.io](https://daytona.io) — $200 trial credit | only for cloud sandboxes |
 | `DATABASE_URL` | [neon.tech](https://neon.tech) | no — falls back to embedded PGlite |
-| `WORKOS_*`, `GITHUB_APP_*` | [workos.com](https://workos.com) — free to 1M MAU | only to run kapi for more than one person |
+| `CLERK_*`, `GITHUB_APP_*` | [clerk.com](https://clerk.com) — free to 10k MAU | only to run kapi for more than one person |
 
 `GROQ_API_KEY` and `CEREBRAS_API_KEY` are optional failover for when Gemini's
 daily quota runs out. Without `GITHUB_TOKEN` a run still completes — worker
@@ -86,7 +87,7 @@ dashboard feed, and the audit log are the same data.
 
 ```
 apps/orchestrator   HTTP + WebSocket API, run engine, DAG scheduler, store
-apps/web            TanStack Start dashboard — submit a run, watch it live
+apps/web            TanStack Start app — landing page, then the dashboard
 packages/*          the interfaces below
 scripts/            run.ts (CLI) · smoke.ts · probe-models.ts · test-*.ts
 ```
@@ -122,25 +123,31 @@ kapi runs two ways, and the difference is entirely in `RepoAccess`.
 database of users, and every run uses that one PAT. This is the quick start
 above, and what the CLI does.
 
-**Many people.** Set `WORKOS_CLIENT_ID` / `WORKOS_API_KEY` and a GitHub App
-(`GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY`) and the chain becomes:
+**Many people.** Set `CLERK_PUBLISHABLE_KEY` / `CLERK_SECRET_KEY` and a GitHub
+App (`GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY`) and the chain becomes:
 
 ```
-WorkOS AuthKit  → who is asking
-WorkOS Pipes    → their GitHub token, held and refreshed by WorkOS,
-                  used to list repos and check they could push themselves
+Clerk session   → who is asking
+Clerk GitHub    → their GitHub token, held and refreshed by Clerk,
+  connection       used to list repos and check they could push themselves
 GitHub App      → the repo owner installed kapi here
                   → a token for that one repository, contents-only, 1 hour
                      → the only credential a sandbox ever sees
 ```
 
+Enable GitHub as a social connection in Clerk (with the `repo` scope) before
+anyone tries to pick a repository; users add it from the account panel the
+dashboard opens for them.
+
 Both parties have to agree: the user must have push rights, *and* the owner
 must have installed the app. Either alone is refused before a sandbox is
 created, with a link to fix it. kapi stores no GitHub token at any point — the
-user's grant lives in WorkOS, and installation tokens are minted per operation.
+user's grant lives in Clerk, and installation tokens are minted per operation.
 
-`KAPI_AUTH_MODE` (`workos` | `none`) forces the choice; by default it follows
-whether WorkOS is configured.
+`KAPI_AUTH_MODE` (`clerk` | `workos` | `none`) forces the choice; by default it
+follows whichever provider is configured, preferring Clerk. The session
+provider sits behind `SessionProvider` in `packages/identity`, so WorkOS
+AuthKit remains a drop-in alternative.
 
 ### Credentials never persist in a sandbox
 
@@ -220,7 +227,7 @@ to, and it is a plain HTTP + WebSocket surface you can drive yourself.
 |---|---|
 | `GET /api/health` | db target, sandbox provider, auth mode, whether an LLM key and a push credential are configured — **public** |
 | `GET /api/me` | the caller, and whether their GitHub is connected |
-| `GET /api/github/connect` | 302 into the WorkOS GitHub authorization flow |
+| `GET /api/github/connect` | 302 into the provider's GitHub authorization flow, or `GITHUB_CONNECT_IN_APP` when the provider (Clerk) owns that flow client-side |
 | `GET /api/github/repos` | repositories the caller can see |
 | `GET /api/github/repos/:owner/:repo/branches` | its branches |
 | `GET /api/github/repos/:owner/:repo/authorization` | whether a run here would be allowed, and how to fix it if not |
@@ -229,8 +236,8 @@ to, and it is a plain HTTP + WebSocket surface you can drive yourself.
 | `POST /api/runs` | start a run — `{ goal, repoUrl, baseBranch?, maxConcurrency?, maxTasks?, providerName? }` |
 | `WS /ws?runId=…&token=…` | live `status` / `plan` / `task` / `message` events |
 
-Everything but `/api/health` needs `Authorization: Bearer <WorkOS access
-token>` when `KAPI_AUTH_MODE=workos`; in `none` mode there is one implicit
+Everything but `/api/health` needs `Authorization: Bearer <session token>`
+when authentication is on; in `none` mode there is one implicit
 local user and the header is ignored. The websocket authenticates during the
 HTTP upgrade — a bad token gets a plain `401`, not an opened-then-closed
 socket — and takes its token in the query string because browsers cannot set

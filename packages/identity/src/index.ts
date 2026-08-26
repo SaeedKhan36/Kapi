@@ -6,7 +6,9 @@ import type { RepoAccess } from "./types.ts";
 export * from "./types.ts";
 export * from "./github-api.ts";
 export * from "./github-app.ts";
+export * from "./session.ts";
 export * from "./workos.ts";
+export * from "./clerk.ts";
 export { PatRepoAccess, GitHubAppRepoAccess };
 export type { GitHubAppUser };
 

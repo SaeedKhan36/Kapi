@@ -7,6 +7,7 @@
  * feed. Both are exercised directly.
  */
 import { authMode, LOCAL_USER } from "../apps/orchestrator/src/auth.ts";
+import { issuerFromPublishableKey } from "../packages/identity/src/clerk.ts";
 import { EventHub } from "../apps/orchestrator/src/events.ts";
 import { Store } from "../apps/orchestrator/src/store.ts";
 import { createDb } from "../packages/db/src/index.ts";
@@ -26,14 +27,34 @@ const seed = (store: Store, id: string, userId?: string) =>
 const main = async () => {
   console.log("\n\x1b[1mauth mode\x1b[0m\n");
 
-  check("defaults to none without WorkOS", authMode({} as NodeJS.ProcessEnv) === "none",
+  const clerkEnv = {
+    CLERK_SECRET_KEY: "sk_test_x",
+    // base64 of "equal-warthog-32.clerk.accounts.dev$"
+    CLERK_PUBLISHABLE_KEY: "pk_test_ZXF1YWwtd2FydGhvZy0zMi5jbGVyay5hY2NvdW50cy5kZXYk",
+  } as unknown as NodeJS.ProcessEnv;
+  const workosEnv = { WORKOS_CLIENT_ID: "c", WORKOS_API_KEY: "k" } as unknown as NodeJS.ProcessEnv;
+
+  check("defaults to none without a provider", authMode({} as NodeJS.ProcessEnv) === "none",
     "the zero-config quick start must keep working");
-  check("defaults to workos once configured",
-    authMode({ WORKOS_CLIENT_ID: "c", WORKOS_API_KEY: "k" } as NodeJS.ProcessEnv) === "workos",
-    "configuring WorkOS is a deliberate act");
+  check("defaults to clerk once configured", authMode(clerkEnv) === "clerk",
+    "configuring Clerk is a deliberate act");
+  check("defaults to workos once configured", authMode(workosEnv) === "workos");
+  check("clerk wins when both are configured",
+    authMode({ ...clerkEnv, ...workosEnv }) === "clerk",
+    "the dashboard ships with Clerk");
   check("explicit none wins over configuration",
-    authMode({ KAPI_AUTH_MODE: "none", WORKOS_CLIENT_ID: "c", WORKOS_API_KEY: "k" } as NodeJS.ProcessEnv) === "none");
+    authMode({ ...clerkEnv, KAPI_AUTH_MODE: "none" } as NodeJS.ProcessEnv) === "none");
+  check("explicit workos wins over a configured clerk",
+    authMode({ ...clerkEnv, ...workosEnv, KAPI_AUTH_MODE: "workos" } as NodeJS.ProcessEnv) === "workos");
   check("local operator has a stable id", LOCAL_USER.id === "local");
+
+  // The publishable key is the only place the instance's issuer is written
+  // down; getting it wrong means every token fails to verify.
+  check("issuer is derived from the publishable key",
+    issuerFromPublishableKey(clerkEnv.CLERK_PUBLISHABLE_KEY!) === "https://equal-warthog-32.clerk.accounts.dev",
+    String(issuerFromPublishableKey(clerkEnv.CLERK_PUBLISHABLE_KEY!)));
+  check("a key that is not Clerk's yields no issuer",
+    issuerFromPublishableKey("not-a-clerk-key") === null);
 
   console.log("\n\x1b[1mrun ownership\x1b[0m\n");
 

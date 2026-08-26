@@ -49,13 +49,18 @@ export type Health = {
   provider: string;
   llmConfigured: boolean;
   pushEnabled: boolean;
-  auth: "workos" | "none";
+  auth: "clerk" | "workos" | "none";
   githubApp: boolean;
 };
 
 export type Me = {
   user: { id: string; email?: string; name?: string };
-  github: { connected: boolean; connectUrl: string };
+  github: {
+    connected: boolean;
+    connectUrl: string;
+    /** True when the provider collects the grant in its own client-side UI. */
+    inApp?: boolean;
+  };
   githubApp: boolean;
 };
 

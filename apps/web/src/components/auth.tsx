@@ -1,95 +1,155 @@
-import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
-import { useEffect, useState, type ReactNode } from "react";
-import { authEnabled, redirectUri, setTokenSource, WORKOS_CLIENT_ID } from "~/lib/auth.ts";
-import { Button, Card, Spinner } from "./ui.tsx";
+import { ClerkProvider, UserButton, useAuth, useClerk } from "@clerk/react";
+import { Link, useRouterState } from "@tanstack/react-router";
+import { useEffect, type ReactNode } from "react";
+import { CLERK_PUBLISHABLE_KEY, authEnabled, setTokenSource } from "~/lib/auth.ts";
+import { buttonClass, Spinner } from "./ui.tsx";
 
 /**
- * Wraps the app in a WorkOS session, when there is one to have.
+ * Wraps the app in a Clerk session, when there is one to have.
  *
- * With no client id configured this renders its children untouched, which is
- * the single-operator path: kapi is meant to work with nothing but a Gemini
- * key, and a login screen in front of a one-person deployment is friction
- * without a purpose.
- *
- * AuthKit is browser-only, so the provider mounts after hydration. The server
- * renders the same children it would render while loading.
+ * With no publishable key configured this renders its children untouched,
+ * which is the single-operator path: kapi is meant to work with nothing but a
+ * Gemini key, and a login screen in front of a one-person deployment is
+ * friction without a purpose. Every export below makes the same check, so no
+ * caller has to.
  */
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => setHydrated(true), []);
 
+/** Clerk's own widgets, dressed in kapi's palette rather than its default light theme. */
+const appearance = {
+  variables: {
+    colorPrimary: "#67e8f9",
+    colorBackground: "#1a1d26",
+    colorForeground: "#f7f8fa",
+    colorInputBackground: "#14161d",
+    colorInputForeground: "#f7f8fa",
+    colorNeutral: "#f7f8fa",
+    fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+    borderRadius: "0.625rem",
+  },
+} as const;
+
+export function AuthProvider({ children }: { children: ReactNode }) {
   if (!authEnabled) return <>{children}</>;
-  if (!hydrated) return <Loading />;
 
   return (
-    <AuthKitProvider clientId={WORKOS_CLIENT_ID!} redirectUri={redirectUri}>
+    <ClerkProvider
+      publishableKey={CLERK_PUBLISHABLE_KEY}
+      appearance={appearance}
+      signInUrl="/sign-in"
+      signUpUrl="/sign-up"
+      afterSignOutUrl="/"
+    >
       <TokenBridge />
-      <SignedIn>{children}</SignedIn>
-    </AuthKitProvider>
+      {children}
+    </ClerkProvider>
   );
 }
 
-/** Publishes AuthKit's token getter to the plain-fetch layer. */
+/** Publishes Clerk's token getter to the plain-fetch layer. */
 function TokenBridge() {
-  const { getAccessToken } = useAuth();
+  const { getToken } = useAuth();
   useEffect(() => {
-    setTokenSource(() => getAccessToken());
+    setTokenSource(() => getToken());
     return () => setTokenSource(null);
-  }, [getAccessToken]);
+  }, [getToken]);
   return null;
 }
 
-function SignedIn({ children }: { children: ReactNode }) {
-  const { isLoading, user, signIn } = useAuth();
+/**
+ * The gate in front of the dashboard.
+ *
+ * Sends a signed-out visitor to the sign-in page rather than showing them an
+ * empty shell: every panel behind this point needs a session to load anything
+ * at all, so a half-rendered dashboard would only be a slower 401.
+ */
+export function RequireAuth({ children }: { children: ReactNode }) {
+  if (!authEnabled) return <>{children}</>;
+  return <ClerkGate>{children}</ClerkGate>;
+}
 
-  if (isLoading) return <Loading />;
-  if (user) return <>{children}</>;
+function ClerkGate({ children }: { children: ReactNode }) {
+  const { isLoaded, isSignedIn } = useAuth();
+  const { redirectToSignIn } = useClerk();
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
 
+  useEffect(() => {
+    if (isLoaded && !isSignedIn) {
+      redirectToSignIn({ signInFallbackRedirectUrl: pathname });
+    }
+  }, [isLoaded, isSignedIn, pathname, redirectToSignIn]);
+
+  if (!isLoaded) return <AuthSplash label="Checking your session…" />;
+  if (!isSignedIn) return <AuthSplash label="Redirecting to sign in…" />;
+  return <>{children}</>;
+}
+
+function AuthSplash({ label }: { label: string }) {
   return (
-    <div className="mx-auto max-w-md px-6 py-24">
-      <Card className="p-8 text-center">
-        <h1 className="text-xl font-semibold tracking-tight">Sign in to kapi</h1>
-        <p className="mt-2 text-sm text-muted">
-          Runs clone your repositories and push branches, so kapi needs to know who you are
-          before it can do either.
-        </p>
-        <Button className="mt-6 w-full" onClick={() => signIn()}>Sign in</Button>
-      </Card>
+    <div className="grid min-h-[60vh] place-items-center">
+      <div className="flex items-center gap-3 text-sm text-dim">
+        <Spinner /> {label}
+      </div>
     </div>
   );
 }
 
-function Loading() {
+/** The signed-in user's avatar menu, for the app header. */
+export function UserMenu() {
+  if (!authEnabled) {
+    return <span className="text-xs text-dim">local operator</span>;
+  }
   return (
-    <div className="grid place-items-center py-24 text-muted">
-      <Spinner />
+    <UserButton
+      appearance={{ elements: { avatarBox: { width: "2rem", height: "2rem" } } }}
+      userProfileProps={{ appearance }}
+    />
+  );
+}
+
+/** The visitor's entry point, in the marketing header: sign in, or go straight in. */
+export function HeaderAuthActions() {
+  if (!authEnabled) {
+    return <Link to="/app" className={buttonClass("primary", "sm")}>Open dashboard</Link>;
+  }
+  return <ClerkHeaderActions />;
+}
+
+function ClerkHeaderActions() {
+  const { isLoaded, isSignedIn } = useAuth();
+
+  if (!isLoaded) return <div className="h-8 w-28 animate-pulse rounded-lg bg-raised/60" />;
+
+  if (isSignedIn) {
+    return (
+      <div className="flex items-center gap-3">
+        <Link to="/app" className={buttonClass("primary", "sm")}>Open dashboard</Link>
+        <UserButton appearance={{ elements: { avatarBox: { width: "2rem", height: "2rem" } } }} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <Link to="/sign-in" className={buttonClass("ghost", "sm")}>Sign in</Link>
+      <Link to="/sign-up" className={buttonClass("primary", "sm")}>Get started</Link>
     </div>
   );
 }
 
-/** The signed-in user's chip, for the header. Renders nothing without auth. */
-export function UserChip() {
+/**
+ * Opens Clerk's account panel, which is where a GitHub connection is added.
+ *
+ * Returns null when Clerk is not in use, so the caller can fall back to the
+ * server's connect URL instead of offering a button that does nothing.
+ */
+export function useOpenAccount(): (() => void) | null {
+  // `authEnabled` is fixed at build time, so this branch never flips between
+  // renders and the hook below is called consistently or not at all.
   if (!authEnabled) return null;
-  return <UserChipInner />;
+  return useClerkAccountOpener();
 }
 
-function UserChipInner() {
-  const { user, signOut } = useAuth();
-  if (!user) return null;
-
-  const label = user.firstName
-    ? [user.firstName, user.lastName].filter(Boolean).join(" ")
-    : user.email;
-
-  return (
-    <div className="ml-auto flex items-center gap-3">
-      <span className="text-xs text-muted">{label}</span>
-      <button
-        onClick={() => signOut()}
-        className="rounded-md border border-line/60 px-2 py-1 text-xs text-muted transition hover:text-fg"
-      >
-        Sign out
-      </button>
-    </div>
-  );
+function useClerkAccountOpener() {
+  const { openUserProfile } = useClerk();
+  return () => openUserProfile({ appearance });
 }
