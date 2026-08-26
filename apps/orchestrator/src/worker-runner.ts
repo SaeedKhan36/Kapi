@@ -62,11 +62,15 @@ export async function runWorkerTask(
   try {
     const box = await cfg.provider.create({
       name: `${cfg.runId}-${task.id}`,
+      // No GitHub credential here, deliberately. The agent inside this sandbox
+      // executes model-chosen shell commands against repository contents, so
+      // anything in its environment is one `echo` away from a prompt injection.
+      // Git operations get a scoped token through withGitAuth instead, for the
+      // duration of the command and no longer.
       env: {
         KAPI_RUN_ID: cfg.runId,
         KAPI_TASK_ID: task.id,
         KAPI_AGENT_ID: me,
-        ...(cfg.githubToken ? { GITHUB_TOKEN: cfg.githubToken } : {}),
       },
       idleTtlSeconds: cfg.idleTtlSeconds,
       cpus: 1,

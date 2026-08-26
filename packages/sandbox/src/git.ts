@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { SandboxProvider } from "./types.ts";
 import { SandboxError } from "./types.ts";
 
@@ -14,18 +15,80 @@ export const DEFAULT_EXCLUDES = [
   "",
 ].join("\n");
 
-/** Injects a token into an https remote without ever logging it. */
-export function authenticatedRemote(repoUrl: string, token?: string): string {
-  if (!token) return repoUrl;
-  try {
-    const u = new URL(repoUrl);
-    if (u.protocol !== "https:") return repoUrl;
-    u.username = "x-access-token";
-    u.password = token;
-    return u.toString();
-  } catch {
-    return repoUrl;
+/**
+ * Runs `fn` with git credentials that exist only for the duration of the call.
+ *
+ * The token is written to a 0600 file inside a 0700 directory and reached
+ * through a GIT_ASKPASS shim, then deleted. It is deliberately never embedded
+ * in the remote URL, which would persist in .git/config for the rest of the
+ * sandbox's life, and never exported as an environment variable, which the
+ * agent could simply echo. The coding engine runs model-chosen shell commands
+ * against repository contents, so any credential it can read is one that a
+ * prompt injection carried in that repository can exfiltrate.
+ */
+export async function withGitAuth<T>(
+  provider: SandboxProvider,
+  sandboxId: string,
+  token: string | undefined,
+  fn: (env: Record<string, string>) => Promise<T>,
+): Promise<T> {
+  // Git must never block on an interactive prompt: no sandbox has a terminal
+  // to answer it, so the command would hang until its timeout rather than
+  // failing with something legible.
+  const base: Record<string, string> = { GIT_TERMINAL_PROMPT: "0" };
+  if (!token) return fn(base);
+
+  const dir = `.kapi-auth-${randomUUID()}`;
+  // Providers resolve relative paths against the workdir, but git executes
+  // GIT_ASKPASS with the repository as its cwd, so that path must be absolute.
+  const root = (await provider.exec(sandboxId, "pwd")).stdout.trim();
+  const askpass = `${root}/${dir}/askpass`;
+  const credential = `${root}/${dir}/credential`;
+
+  // The 0700 directory is what actually protects the token - the files inside
+  // are created with default permissions and tightened immediately after.
+  const made = await provider.exec(sandboxId, `mkdir -m 700 -p ${shellQuote(dir)}`);
+  if (made.exitCode !== 0) {
+    throw new SandboxError(
+      `could not create the git credential directory: ${made.stderr || made.stdout}`,
+      provider.name,
+    );
   }
+
+  try {
+    await provider.writeFile(sandboxId, `${dir}/credential`, token);
+    await provider.writeFile(sandboxId, `${dir}/askpass`, askpassScript(credential));
+
+    const secured = await provider.exec(
+      sandboxId,
+      `chmod 600 ${shellQuote(credential)} && chmod 700 ${shellQuote(askpass)}`,
+    );
+    if (secured.exitCode !== 0) {
+      throw new SandboxError(
+        `could not secure the git credentials: ${secured.stderr || secured.stdout}`,
+        provider.name,
+      );
+    }
+
+    return await fn({ ...base, GIT_ASKPASS: askpass });
+  } finally {
+    // Best effort. The sandbox is destroyed after the run either way, but a
+    // credential should not outlive the single operation that needed it.
+    await provider.exec(sandboxId, `rm -rf ${shellQuote(dir)}`).catch(() => {});
+  }
+}
+
+/** Answers git's username and password prompts from a file, and nothing else. */
+function askpassScript(credentialPath: string): string {
+  return [
+    "#!/bin/sh",
+    'case "$1" in',
+    "  *[Uu]sername*) printf '%s\\n' 'x-access-token' ;;",
+    `  *[Pp]assword*) exec head -n 1 ${shellQuote(credentialPath)} ;;`,
+    "  *) exit 1 ;;",
+    "esac",
+    "",
+  ].join("\n");
 }
 
 export const redact = (text: string, ...secrets: Array<string | undefined>): string =>
@@ -50,26 +113,29 @@ export async function cloneRepo(
   },
 ) {
   const dir = opts.dir ?? ".";
-  const remote = authenticatedRemote(opts.repoUrl, opts.token);
+  const remote = opts.repoUrl;
   // A freshly created repo has no branches at all, so --branch would fail.
   // Clone bare of that flag and check the branch out afterwards if it exists.
   const branchArg = opts.branch ? `--branch ${shellQuote(opts.branch)}` : "";
   const depthArg = opts.depth === 0 ? "" : `--depth ${opts.depth ?? 50}`;
 
-  let res = await provider.exec(
-    sandboxId,
-    `git clone ${depthArg} ${branchArg} ${shellQuote(remote)} ${shellQuote(dir)} 2>&1`,
-    { timeoutMs: 180_000 },
-  );
-
-  // Retry without --branch: an empty repo has no branch to ask for.
-  if (res.exitCode !== 0 && branchArg) {
-    res = await provider.exec(
+  const res = await withGitAuth(provider, sandboxId, opts.token, async (env) => {
+    let attempt = await provider.exec(
       sandboxId,
-      `rm -rf ${shellQuote(dir)} && git clone ${depthArg} ${shellQuote(remote)} ${shellQuote(dir)} 2>&1`,
-      { timeoutMs: 180_000 },
+      `git clone ${depthArg} ${branchArg} ${shellQuote(remote)} ${shellQuote(dir)} 2>&1`,
+      { env, timeoutMs: 180_000 },
     );
-  }
+
+    // Retry without --branch: an empty repo has no branch to ask for.
+    if (attempt.exitCode !== 0 && branchArg) {
+      attempt = await provider.exec(
+        sandboxId,
+        `rm -rf ${shellQuote(dir)} && git clone ${depthArg} ${shellQuote(remote)} ${shellQuote(dir)} 2>&1`,
+        { env, timeoutMs: 180_000 },
+      );
+    }
+    return attempt;
+  });
 
   if (res.exitCode !== 0) {
     throw new SandboxError(
@@ -128,15 +194,17 @@ export async function seedEmptyRepo(
     `# ${title}\n\nInitialised by kapi so agents have a base branch to work from.\n`,
   );
 
-  const res = await provider.exec(
-    sandboxId,
-    [
-      `git checkout -b ${shellQuote(opts.branch)} 2>/dev/null || git checkout ${shellQuote(opts.branch)}`,
-      "git add -A",
-      `git commit -m ${shellQuote("Initialise repository")}`,
-      `git push -u origin ${shellQuote(opts.branch)} 2>&1`,
-    ].join(" && "),
-    { cwd: dir, timeoutMs: 120_000 },
+  const res = await withGitAuth(provider, sandboxId, opts.token, (env) =>
+    provider.exec(
+      sandboxId,
+      [
+        `git checkout -b ${shellQuote(opts.branch)} 2>/dev/null || git checkout ${shellQuote(opts.branch)}`,
+        "git add -A",
+        `git commit -m ${shellQuote("Initialise repository")}`,
+        `git push -u origin ${shellQuote(opts.branch)} 2>&1`,
+      ].join(" && "),
+      { cwd: dir, env, timeoutMs: 120_000 },
+    ),
   );
 
   if (res.exitCode !== 0) {
@@ -161,14 +229,16 @@ export async function createRemoteBranch(
   opts: { branch: string; from: string; token?: string; dir?: string },
 ): Promise<void> {
   const dir = opts.dir ?? "repo";
-  const res = await provider.exec(
-    sandboxId,
-    [
-      `git checkout ${shellQuote(opts.from)}`,
-      `git checkout -B ${shellQuote(opts.branch)}`,
-      `git push -u origin ${shellQuote(opts.branch)} 2>&1`,
-    ].join(" && "),
-    { cwd: dir, timeoutMs: 120_000 },
+  const res = await withGitAuth(provider, sandboxId, opts.token, (env) =>
+    provider.exec(
+      sandboxId,
+      [
+        `git checkout ${shellQuote(opts.from)}`,
+        `git checkout -B ${shellQuote(opts.branch)}`,
+        `git push -u origin ${shellQuote(opts.branch)} 2>&1`,
+      ].join(" && "),
+      { cwd: dir, env, timeoutMs: 120_000 },
+    ),
   );
   if (res.exitCode !== 0) {
     throw new SandboxError(
@@ -193,16 +263,18 @@ export async function mergeIntoIntegration(
   opts: { integration: string; branch: string; token?: string; dir?: string },
 ): Promise<MergeResult> {
   const dir = opts.dir ?? "repo";
-  const res = await provider.exec(
-    sandboxId,
-    [
-      `git fetch origin ${shellQuote(opts.integration)} 2>&1`,
-      `git checkout ${shellQuote(opts.integration)} 2>/dev/null || git checkout -b ${shellQuote(opts.integration)} origin/${opts.integration}`,
-      `git reset --hard origin/${shellQuote(opts.integration)}`,
-      `git merge --no-edit ${shellQuote(opts.branch)} 2>&1`,
-      `git push origin ${shellQuote(opts.integration)} 2>&1`,
-    ].join(" && "),
-    { cwd: dir, timeoutMs: 180_000 },
+  const res = await withGitAuth(provider, sandboxId, opts.token, (env) =>
+    provider.exec(
+      sandboxId,
+      [
+        `git fetch origin ${shellQuote(opts.integration)} 2>&1`,
+        `git checkout ${shellQuote(opts.integration)} 2>/dev/null || git checkout -b ${shellQuote(opts.integration)} origin/${opts.integration}`,
+        `git reset --hard origin/${shellQuote(opts.integration)}`,
+        `git merge --no-edit ${shellQuote(opts.branch)} 2>&1`,
+        `git push origin ${shellQuote(opts.integration)} 2>&1`,
+      ].join(" && "),
+      { cwd: dir, env, timeoutMs: 180_000 },
+    ),
   );
 
   const output = redact(res.stdout + res.stderr, opts.token);

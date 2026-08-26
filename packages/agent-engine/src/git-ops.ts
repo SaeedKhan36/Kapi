@@ -1,5 +1,5 @@
 import type { SandboxProvider, ExecResult } from "@kapi/sandbox";
-import { shellQuote } from "@kapi/sandbox";
+import { redact, shellQuote, withGitAuth } from "@kapi/sandbox";
 import type { FileRef } from "@kapi/protocol";
 
 export async function currentCommit(p: SandboxProvider, id: string, cwd: string): Promise<string> {
@@ -57,9 +57,10 @@ export async function commitAll(
 export async function pushBranch(
   p: SandboxProvider, id: string, cwd: string, branch: string, token?: string,
 ) {
-  const res = await p.exec(id, `git push -u origin ${shellQuote(branch)} 2>&1`, { cwd, timeoutMs: 120_000 });
+  const res = await withGitAuth(p, id, token, (env) =>
+    p.exec(id, `git push -u origin ${shellQuote(branch)} 2>&1`, { cwd, env, timeoutMs: 120_000 }),
+  );
   if (res.exitCode !== 0) {
-    const msg = token ? (res.stdout + res.stderr).split(token).join("***") : res.stdout + res.stderr;
-    throw new Error(`git push failed: ${msg}`);
+    throw new Error(`git push failed: ${redact(res.stdout + res.stderr, token)}`);
   }
 }
