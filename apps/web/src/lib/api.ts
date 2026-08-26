@@ -87,6 +87,13 @@ export const api = {
   // the UI uses to discover whether authentication is on in the first place.
   health: () => fetch("/api/health").then(json<Health>),
 
+  /** Short-lived handle for the WebSocket upgrade. Replaces putting a JWT in the URL. */
+  wsTicket: (runId: string) =>
+    request<{ ticket: string; expiresInSeconds: number }>(
+      `/api/ws-tickets?runId=${encodeURIComponent(runId)}`,
+      { method: "POST" },
+    ),
+
   me: () => request<Me>("/api/me"),
   listRuns: () => request<Run[]>("/api/runs"),
   getRun: (id: string) => request<RunDetail>(`/api/runs/${id}`),

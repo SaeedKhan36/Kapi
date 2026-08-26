@@ -42,6 +42,10 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 # ---------------------------------------------------------------- build
 FROM deps AS build
 COPY . .
+# Baked into the dashboard bundle. Set at `docker compose build` time from .env;
+# a runtime env var cannot add a sign-in button that was compiled out.
+ARG CLERK_PUBLISHABLE_KEY
+ENV CLERK_PUBLISHABLE_KEY=$CLERK_PUBLISHABLE_KEY
 RUN pnpm build:api && pnpm --filter @kapi/web build
 
 # --------------------------------------------------------- orchestrator
@@ -95,3 +99,43 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "server.mjs"]
+
+# -------------------------------------------------------------------- agent
+# Isolated workspace for SANDBOX_PROVIDER=docker. Built as kapi/agent:latest
+# so the default image name in DockerProvider actually exists.
+FROM node:22-bookworm-slim AS agent
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    git python3 python3-pip python3-venv bash curl ca-certificates build-essential \
+  && rm -rf /var/lib/apt/lists/*
+WORKDIR /workspace
+CMD ["sleep", "infinity"]
+
+# --------------------------------------------------------------- hosted
+# Single public process for Render (and any host that only gives one port).
+# The dashboard binds PORT; the orchestrator stays on loopback :8787.
+FROM base AS hosted
+ENV NODE_ENV=production
+WORKDIR /app
+
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/packages/db/migrations ./packages/db/migrations
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/apps/web ./apps/web
+COPY --from=build /app/package.json /app/pnpm-workspace.yaml ./
+COPY --from=build /app/deploy/start-hosted.mjs ./deploy/start-hosted.mjs
+
+RUN chown -R node:node /app
+USER node
+
+ENV ORCHESTRATOR_PORT=8787
+ENV ORCHESTRATOR_URL=http://127.0.0.1:8787
+ENV HOST=0.0.0.0
+ENV PORT=3000
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=5 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "deploy/start-hosted.mjs"]

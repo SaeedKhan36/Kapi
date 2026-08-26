@@ -26,8 +26,8 @@ export class RoutedLLM implements LLMProvider {
   constructor(
     private providers: LLMProvider[],
     private budget: Budget = {
-      maxRequests: Number(process.env.MAX_LLM_REQUESTS_PER_RUN ?? 300),
-      maxTokens: Number(process.env.MAX_LLM_TOKENS_PER_RUN ?? 2_000_000),
+      maxRequests: Number(process.env.MAX_LLM_REQUESTS_PER_RUN ?? 60),
+      maxTokens: Number(process.env.MAX_LLM_TOKENS_PER_RUN ?? 400_000),
     },
     private onUsage?: (snapshot: BudgetSnapshot) => void,
   ) {}

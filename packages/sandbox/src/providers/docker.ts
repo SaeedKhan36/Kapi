@@ -42,8 +42,12 @@ export class DockerProvider implements SandboxProvider {
     if (spec.cpus) args.push("--cpus", String(spec.cpus));
     if (spec.memoryMb) args.push("--memory", `${spec.memoryMb}m`);
     for (const [k, v] of Object.entries(spec.env ?? {})) args.push("-e", `${k}=${v}`);
-    // Let the agent reach an orchestrator running on the host.
+    // Sibling containers started via the host docker daemon are not on the
+    // compose network. host.docker.internal (and optional ORCHESTRATOR_PUBLIC_URL)
+    // is how they reach the orchestrator the operator actually exposed.
     args.push("--add-host", "host.docker.internal:host-gateway");
+    const publicUrl = process.env.ORCHESTRATOR_PUBLIC_URL;
+    if (publicUrl) args.push("-e", `ORCHESTRATOR_PUBLIC_URL=${publicUrl}`);
     args.push(spec.image ?? this.defaultImage, "sleep", "infinity");
 
     try {

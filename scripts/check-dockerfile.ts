@@ -61,6 +61,14 @@ check("has an init process for signal handling", /tini/.test(dockerfile),
   "without one, PID 1 ignores SIGTERM and sandboxes leak");
 check("declares a healthcheck", /HEALTHCHECK/.test(dockerfile));
 check("pins a base image tag", /^FROM node:\d+/m.test(dockerfile));
+check("builds an agent image", /^FROM node:.* AS agent/m.test(dockerfile));
+check("final image is the hosted process", /FROM base AS hosted[\s\S]*CMD \["node", "deploy\/start-hosted.mjs"\]/.test(dockerfile));
+
+const compose = readFileSync("docker-compose.yml", "utf8");
+console.log("\n\x1b[1mdocker compose\x1b[0m\n");
+check("compose proxies /api through the dashboard", /ORCHESTRATOR_URL:\s*http:\/\/orchestrator:8787/.test(compose));
+check("compose includes Postgres", /image:\s*postgres:/.test(compose));
+check("compose builds kapi/agent:latest", /target:\s*agent/.test(compose) && /kapi\/agent:latest/.test(compose));
 
 console.log(failures === 0 ? "\n\x1b[32mALL PASS\x1b[0m\n" : `\n\x1b[31m${failures} FAILED\x1b[0m\n`);
 process.exit(failures === 0 ? 0 : 1);

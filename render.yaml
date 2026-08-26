@@ -1,0 +1,44 @@
+# Render Blueprint: one free web service.
+# Cold starts after idle are expected. Sandboxes run on Daytona, not Docker.
+#
+# Create at https://dashboard.render.com/blueprints with this repo.
+# Secrets are sync: false — paste them in the dashboard, do not commit them.
+
+services:
+  - type: web
+    name: kapi
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: KAPI_AUTH_MODE
+        value: none
+      - key: SANDBOX_PROVIDER
+        value: daytona
+      - key: KAPI_BUS
+        value: inprocess
+      - key: HOST
+        value: 0.0.0.0
+      - key: ORCHESTRATOR_PORT
+        value: "8787"
+      - key: ORCHESTRATOR_URL
+        value: http://127.0.0.1:8787
+      - key: MAX_CONCURRENT_WORKERS
+        value: "1"
+      - key: MAX_CONCURRENT_RUNS
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: DAYTONA_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false

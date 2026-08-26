@@ -77,8 +77,9 @@ including ports and the free-tier budget caps.
    → review | blocked | failed`.
 4. **Report.** Commits land on the worker's branch and are pushed when a
    `GITHUB_TOKEN` is present; branches, changed files, and per-task summaries
-   come back as artifacts. Opening PRs is not automated yet — merge the branches
-   yourself.
+   come back as artifacts. Approved worker branches are merged into an
+   integration branch and a pull request is opened when a GitHub credential is
+   present.
 
 Every message crossing the bus is persisted as it goes, so the CLI output, the
 dashboard feed, and the audit log are the same data.
@@ -234,14 +235,16 @@ to, and it is a plain HTTP + WebSocket surface you can drive yourself.
 | `GET /api/runs` | the caller's runs |
 | `GET /api/runs/:id` | one run with its tasks, agents, messages, artifacts |
 | `POST /api/runs` | start a run — `{ goal, repoUrl, baseBranch?, maxConcurrency?, maxTasks?, providerName? }`; `429` when rate-limited or at the concurrent-run cap |
-| `WS /ws?runId=…&token=…` | live `status` / `plan` / `task` / `message` events |
+| `POST /api/ws-tickets` | `{ ticket, expiresInSeconds }` — short-lived handle for the live feed |
+| `WS /ws?runId=…&ticket=…` | live `status` / `plan` / `task` / `message` events |
 
 Everything but `/api/health` needs `Authorization: Bearer <session token>`
 when authentication is on; in `none` mode there is one implicit
 local user and the header is ignored. The websocket authenticates during the
-HTTP upgrade — a bad token gets a plain `401`, not an opened-then-closed
-socket — and takes its token in the query string because browsers cannot set
-headers on a WebSocket.
+HTTP upgrade — a bad ticket gets a plain `401`, not an opened-then-closed
+socket. Browsers cannot set headers on a WebSocket, so the dashboard mints a
+ticket over HTTP and puts that on the URL instead of the session JWT. `token=`
+is still accepted for non-browser callers.
 
 `POST /api/runs` returns `202 { runId }` as soon as the run row exists rather
 than holding the request open for the minutes a run takes; follow the rest over
@@ -340,27 +343,50 @@ Requires Node 22+ and pnpm 10.
 
 ## Deploying
 
-```bash
-pnpm build          # dist/orchestrator.mjs + dist/migrate.mjs + the dashboard
-pnpm db:migrate     # apply the schema
-pnpm start          # node dist/orchestrator.mjs
-```
-
-Or as containers:
+The public UI and API are **one Render web service** (`render.yaml`). Cold
+starts after idle are expected. Sandboxes run on Daytona; Postgres is Neon.
 
 ```bash
-docker compose up --build
+# After render.yaml is on the default branch:
+# https://dashboard.render.com/blueprints → New Blueprint → this repo
 ```
 
-The orchestrator bundles to a single file that plain `node` runs — no pnpm, no
-TypeScript, no `node_modules`. The dashboard's production server serves the
-build and forwards `/api` and `/ws` to `ORCHESTRATOR_URL`, so the browser stays
-same-origin exactly as it does behind Vite in development.
+Paste `DATABASE_URL`, `GEMINI_API_KEY`, `GITHUB_TOKEN`, and `DAYTONA_API_KEY`
+in the Render dashboard (never commit them). The URL is
+`https://<service>.onrender.com`.
+
+Local/VM compose is still available for a machine you control:
+
+```bash
+pnpm build
+pnpm db:migrate
+pnpm start          # orchestrator :8787
+pnpm start:web      # dashboard :3000, proxies /api and /ws
+```
+
+Compose starts Postgres, migrates, builds `kapi/agent:latest` for
+`SANDBOX_PROVIDER=docker`, and serves the dashboard on `:3000`. The
+orchestrator bundle has no PGlite; production always needs Postgres.
+
+The dashboard's production server (`apps/web/server.mjs`) forwards `/api` and
+`/ws` to `ORCHESTRATOR_URL`, so the browser stays same-origin exactly as it
+does behind Vite in development. Put TLS in front of `:3000` (Caddy, nginx,
+Cloudflare) and point Clerk's allowed origins at that hostname.
 
 **A deployment needs a real `DATABASE_URL`.** PGlite ships WebAssembly that
 cannot be bundled, so a built artifact has no embedded database — which is the
 right constraint anyway, since PGlite allows one writer and could not be shared
-by two instances.
+by two instances. Compose supplies one; a managed Neon URL is better for
+anything you would mind losing.
+
+Multi-user: set Clerk keys **before** `docker compose build` (the publishable
+key is compiled into the dashboard), install the GitHub App, and set
+`KAPI_PUBLIC_URL` to the public dashboard origin so CORS matches. WorkOS is
+API-only; the dashboard UI is Clerk.
+
+For `SANDBOX_PROVIDER=docker`, uncomment the docker.sock volume on the
+orchestrator service. Prefer Daytona on a host you do not want running
+untrusted builds.
 
 **More than one orchestrator needs `KAPI_BUS=redis`.** Agents reach each other
 over the bus, and the in-process one stops at the process boundary — two
@@ -398,6 +424,6 @@ by hand in two places and drift silently otherwise.
 
 ## Status
 
-Early. It plans, runs workers in parallel, commits, and pushes branches. It does
-not yet open pull requests, merge worker branches into the integration branch, or
-resume an interrupted run.
+Early. It plans, runs workers in parallel, reviews diffs, merges approved
+worker branches into an integration branch, and opens a pull request. It does
+not yet resume an interrupted run.

@@ -1,44 +1,87 @@
-# Runs the dashboard and the orchestrator together.
+# Runs the dashboard, orchestrator, and a local Postgres together.
 #
-#   cp .env.example .env    # fill in GEMINI_API_KEY at minimum
+#   cp .env.example .env    # at least GEMINI_API_KEY
 #   docker compose up --build
 #
-# Postgres is not included on purpose. The orchestrator falls back to an
-# embedded database when DATABASE_URL is unset, which is enough to try it, and
-# a real deployment should point at a managed instance rather than a container
-# whose volume is one `docker compose down -v` from gone.
+# Then open http://localhost:3000. The dashboard proxies /api and /ws to the
+# orchestrator, so the browser stays same-origin.
+#
+# Postgres is bundled so the production image (which has no PGlite) can boot
+# without a Neon account. Point DATABASE_URL at a managed instance for anything
+# you would mind losing; this volume dies with `docker compose down -v`.
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kapi
+      POSTGRES_PASSWORD: kapi
+      POSTGRES_DB: kapi
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kapi -d kapi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Builds kapi/agent:latest so SANDBOX_PROVIDER=docker has an image to run.
+  # Exits immediately; the image is what the orchestrator needs, not a process.
+  agent:
+    build: { context: ., target: agent }
+    image: kapi/agent:latest
+    command: ["true"]
+    restart: "no"
+
   migrate:
     build: { context: ., target: orchestrator }
     command: ["node", "dist/migrate.mjs"]
-    env_file: [.env]
-    # Nothing to do without a real Postgres; the embedded database creates its
-    # own schema, and the migrator exits cleanly saying so.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Overrides an empty DATABASE_URL in .env.example so compose always has a
+      # real Postgres. To use Neon instead, set this to that URL here.
+      DATABASE_URL: postgres://kapi:kapi@postgres:5432/kapi
+    depends_on:
+      postgres: { condition: service_healthy }
     restart: "no"
 
   orchestrator:
     build: { context: ., target: orchestrator }
-    env_file: [.env]
+    env_file:
+      - path: .env
+        required: false
     environment:
-      ORCHESTRATOR_PORT: 8787
+      DATABASE_URL: postgres://kapi:kapi@postgres:5432/kapi
+      ORCHESTRATOR_PORT: "8787"
+      KAPI_PUBLIC_URL: ${KAPI_PUBLIC_URL:-http://localhost:3000}
+      KAPI_AGENT_IMAGE: kapi/agent:latest
+      ORCHESTRATOR_PUBLIC_URL: http://host.docker.internal:8787
     ports: ["8787:8787"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on:
       migrate: { condition: service_completed_successfully }
+      agent: { condition: service_completed_successfully }
     # Sandboxes are billed per second, so the container must be allowed to run
     # its shutdown path rather than being killed at the default 10s.
     stop_grace_period: 60s
     restart: unless-stopped
+    # Uncomment to let SANDBOX_PROVIDER=docker start sibling containers:
+    # volumes: ["/var/run/docker.sock:/var/run/docker.sock"]
 
   web:
-    build: { context: ., target: web }
+    build:
+      context: .
+      target: web
+      args:
+        CLERK_PUBLISHABLE_KEY: ${CLERK_PUBLISHABLE_KEY:-}
     environment:
-      PORT: 3000
-      # Baked into the bundle at build time, not read at runtime - see
-      # apps/web/src/lib/auth.ts. Set it in .env before building, or the
-      # dashboard ships without a sign-in button while the API demands one.
-      VITE_WORKOS_CLIENT_ID: ${VITE_WORKOS_CLIENT_ID:-}
-      VITE_WORKOS_REDIRECT_URI: ${VITE_WORKOS_REDIRECT_URI:-}
+      PORT: "3000"
+      ORCHESTRATOR_URL: http://orchestrator:8787
     ports: ["3000:3000"]
     depends_on: [orchestrator]
     restart: unless-stopped
+
+volumes:
+  pgdata:

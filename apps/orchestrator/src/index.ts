@@ -3,7 +3,7 @@ loadEnv();
 
 import { serve } from "@hono/node-server";
 import { Hono, type Context } from "hono";
-import { cors } from "hono/cors";
+import { cors as honoCors } from "hono/cors";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
@@ -17,7 +17,9 @@ import { Store } from "./store.ts";
 import { RunEngine, RunNotAuthorizedError } from "./run-engine.ts";
 import { EventHub } from "./events.ts";
 import { createAuth, providerAllowed, type AuthedEnv } from "./auth.ts";
+import { allowCorsOrigin, corsPolicy } from "./cors.ts";
 import { createLimits } from "./limits.ts";
+import { WsTicketStore } from "./ws-tickets.ts";
 import { sharedSandboxLimiter } from "@kapi/sandbox";
 import { repoAccessFor } from "./github-routes.ts";
 
@@ -41,6 +43,8 @@ await readyMessageBus(bus);
 const hub = new EventHub();
 const auth = createAuth(store);
 const limits = createLimits();
+const tickets = new WsTicketStore();
+const corsAllow = corsPolicy(process.env, auth.mode);
 const sandboxes = sharedSandboxLimiter();
 const engine = new RunEngine(store, bus, { onEvent: (e) => hub.publish(e) });
 
@@ -48,7 +52,10 @@ const engine = new RunEngine(store, bus, { onEvent: (e) => hub.publish(e) });
 const scope = (userId: string) => (auth.mode === "none" ? undefined : userId);
 
 const app = new Hono<AuthedEnv>();
-app.use("/api/*", cors());
+app.use("/api/*", honoCors({
+  origin: (origin) => allowCorsOrigin(origin, corsAllow) ?? "",
+  credentials: true,
+}));
 
 // Health describes the deployment and must answer before anyone has signed in.
 app.get("/api/health", (c) =>
@@ -76,6 +83,16 @@ app.get("/api/health", (c) =>
 );
 
 app.use("/api/*", auth.middleware);
+
+/**
+ * A handle the browser can put on the WebSocket URL instead of its session
+ * JWT. Issued over HTTP so the token stays in an Authorization header; spent
+ * at the upgrade. See `WsTicketStore`.
+ */
+app.post("/api/ws-tickets", async (c) => {
+  const runId = c.req.query("runId") || null;
+  return c.json(tickets.issue(c.get("user").id, runId));
+});
 
 app.get("/api/me", async (c) => {
   const user = c.get("user");
@@ -290,10 +307,10 @@ const server = serve({ fetch: app.fetch, port }, () => {
  * them. Accepting the upgrade first and closing afterwards would work, but it
  * hands anyone an open socket for the duration of a token check.
  *
- * The token travels in the query string because browsers cannot set headers on
- * a WebSocket. That puts it in this process's logs at most - it is the user's
- * own short-lived session token, and the alternative is a cookie, which the
- * dashboard does not use.
+ * Browsers cannot set headers on a WebSocket, so proof travels in the query
+ * string. The dashboard sends a short-lived ticket from `POST /api/ws-tickets`
+ * rather than the session JWT, which would otherwise land in access logs.
+ * `token=` remains accepted for non-browser callers.
  */
 const wss = new WebSocketServer({ noServer: true });
 
@@ -307,8 +324,15 @@ server.on("upgrade", (req, socket, head) => {
   void (async () => {
     let userId: string | undefined;
     try {
-      const user = await auth.authenticate(url.searchParams.get("token") ?? undefined);
-      userId = scope(user.id);
+      const runId = url.searchParams.get("runId");
+      const ticket = tickets.resolve(url.searchParams.get("ticket") ?? undefined);
+      if (ticket) {
+        if (ticket.runId && runId && ticket.runId !== runId) throw new Error("ticket run mismatch");
+        userId = scope(ticket.userId);
+      } else {
+        const user = await auth.authenticate(url.searchParams.get("token") ?? undefined);
+        userId = scope(user.id);
+      }
     } catch {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();

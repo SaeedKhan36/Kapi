@@ -26,6 +26,14 @@ export type Db = Awaited<ReturnType<typeof createDb>>;
 export async function createDb(url = process.env.DATABASE_URL) {
   const inMemory = url === "memory" || url === ":memory:";
 
+  if (process.env.NODE_ENV === "production" && (!url || inMemory)) {
+    throw new Error(
+      "production requires DATABASE_URL to be a Postgres connection string " +
+        "(free at neon.tech, or the postgres service in docker compose). " +
+        "The bundled image has no embedded database.",
+    );
+  }
+
   if (url && !inMemory) {
     const [{ drizzle }, postgresMod] = await Promise.all([
       import("drizzle-orm/postgres-js"),

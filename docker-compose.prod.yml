@@ -1,0 +1,56 @@
+# Production overlay for a single always-on host (Oracle VM, home lab, etc.).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build
+#
+# Differences from the laptop compose file:
+#   - Postgres is Neon (DATABASE_URL), not a container that dies with the VM
+#   - Caddy terminates TLS on 80/443
+#   - Docker sandboxes are enabled (docker.sock)
+#   - Only :80/:443 are published; the API is not exposed on :8787
+
+services:
+  postgres:
+    profiles: ["off"]
+
+  migrate:
+    depends_on: !override {}
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+
+  orchestrator:
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      NODE_ENV: production
+      KAPI_AUTH_MODE: ${KAPI_AUTH_MODE:-none}
+      SANDBOX_PROVIDER: ${SANDBOX_PROVIDER:-docker}
+      KAPI_PUBLIC_URL: ${KAPI_PUBLIC_URL}
+      KAPI_AGENT_IMAGE: kapi/agent:latest
+      ORCHESTRATOR_PUBLIC_URL: http://host.docker.internal:8787
+      MAX_CONCURRENT_WORKERS: ${MAX_CONCURRENT_WORKERS:-1}
+      MAX_CONCURRENT_RUNS: ${MAX_CONCURRENT_RUNS:-1}
+    ports: !override []
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  web:
+    environment:
+      PORT: "3000"
+      HOST: 0.0.0.0
+      ORCHESTRATOR_URL: http://orchestrator:8787
+    ports: !override []
+
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
+    environment:
+      KAPI_HOST: ${KAPI_HOST:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [web]
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
