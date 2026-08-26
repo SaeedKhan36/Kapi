@@ -226,7 +226,7 @@ to, and it is a plain HTTP + WebSocket surface you can drive yourself.
 | `GET /api/github/repos/:owner/:repo/authorization` | whether a run here would be allowed, and how to fix it if not |
 | `GET /api/runs` | the caller's runs |
 | `GET /api/runs/:id` | one run with its tasks, agents, messages, artifacts |
-| `POST /api/runs` | start a run — `{ goal, repoUrl, baseBranch?, maxConcurrency?, maxTasks?, providerName? }` |
+| `POST /api/runs` | start a run — `{ goal, repoUrl, baseBranch?, maxConcurrency?, maxTasks?, providerName? }`; `429` when rate-limited or at the concurrent-run cap |
 | `WS /ws?runId=…&token=…` | live `status` / `plan` / `task` / `message` events |
 
 Everything but `/api/health` needs `Authorization: Bearer <WorkOS access
@@ -271,6 +271,25 @@ Built in, not bolted on:
   tokens in one early run.
 - **Provider failover.** Gemini → Groq → Cerebras behind one interface.
 - **Sandbox idle-TTL**, so a leaked Daytona sandbox cannot quietly burn credit.
+- **A ceiling on live sandboxes** (`MAX_CONCURRENT_SANDBOXES`, default 12).
+  `MAX_CONCURRENT_WORKERS` bounds one run, which is the wrong unit for money —
+  ten runs of four workers is forty billable sandboxes and no single run has
+  misbehaved. Enforced by wrapping the provider, so it covers the planner, the
+  workers and the reviewers without four call sites having to remember.
+- **Limits on what one caller may ask for** — `MAX_RUNS_PER_HOUR` as a token
+  bucket, plus `MAX_CONCURRENT_RUNS` and `MAX_CONCURRENT_RUNS_PER_USER`. A
+  refusal is a `429` carrying `Retry-After`. Without these, one caller can
+  queue a hundred runs that starve everyone else and spend a daily LLM quota on
+  planning before a sandbox is ever created.
+
+Both ceilings are **per orchestrator process**, so a multi-instance deployment
+should divide its budget between instances. `GET /api/health` reports the
+configured limits and where the process currently sits against them.
+
+> Keep `MAX_CONCURRENT_SANDBOXES` above `MAX_CONCURRENT_WORKERS`: a worker
+> holds its own sandbox while the reviewer opens a second one to read the
+> branch. A creation that cannot get a slot within `SANDBOX_SLOT_WAIT_MS`
+> fails with a message naming the cap, rather than waiting forever.
 
 ### Measured, not assumed: Gemini's free tier has no Pro
 

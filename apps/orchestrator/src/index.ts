@@ -17,6 +17,8 @@ import { Store } from "./store.ts";
 import { RunEngine, RunNotAuthorizedError } from "./run-engine.ts";
 import { EventHub } from "./events.ts";
 import { createAuth, providerAllowed, type AuthedEnv } from "./auth.ts";
+import { createLimits } from "./limits.ts";
+import { sharedSandboxLimiter } from "@kapi/sandbox";
 import { repoAccessFor } from "./github-routes.ts";
 
 const CreateRunSchema = z.object({
@@ -38,6 +40,8 @@ const bus = createMessageBus();
 await readyMessageBus(bus);
 const hub = new EventHub();
 const auth = createAuth(store);
+const limits = createLimits();
+const sandboxes = sharedSandboxLimiter();
 const engine = new RunEngine(store, bus, { onEvent: (e) => hub.publish(e) });
 
 /** In single-operator mode there is one user, so scoping reads is meaningless. */
@@ -57,6 +61,17 @@ app.get("/api/health", (c) =>
     githubApp: githubAppConfigured(),
     pushEnabled: Boolean(process.env.GITHUB_TOKEN) || githubAppConfigured(),
     clients: hub.clientCount,
+    // What this process will and will not spend, and where it currently sits.
+    // Worth publishing: a run refused as rate-limited is otherwise
+    // indistinguishable from one refused for any other reason.
+    limits: {
+      runsPerHour: limits.rate.perHour,
+      burst: limits.rate.burst,
+      concurrentRuns: `${limits.runs.active}/${limits.runs.maxTotal}`,
+      concurrentRunsPerUser: limits.runs.maxPerUser,
+      sandboxes: `${sandboxes.active}/${sandboxes.max}`,
+      sandboxesWaiting: sandboxes.waiting,
+    },
   }),
 );
 
@@ -159,10 +174,29 @@ app.post("/api/runs", async (c) => {
   }
 
   const user = c.get("user");
+
+  // Cheapest check first: refusing a rate-limited caller must not cost a
+  // GitHub round trip, or the limit becomes its own amplification.
+  const rate = limits.rate.take(user.id);
+  if (!rate.ok) {
+    c.header("retry-after", String(rate.retryAfterSeconds));
+    return c.json({
+      error: rate.reason,
+      code: "RATE_LIMITED",
+      retryAfterSeconds: rate.retryAfterSeconds,
+    }, 429);
+  }
+
+  const slot = limits.runs.admit(user.id);
+  if (!slot.ok) {
+    return c.json({ error: slot.reason, code: "TOO_MANY_RUNS" }, 429);
+  }
+
   let repoAccess;
   try {
     repoAccess = await repoAccessFor(auth, user);
   } catch (err) {
+    slot.release();
     return githubError(c, err);
   }
 
@@ -181,10 +215,14 @@ app.post("/api/runs", async (c) => {
             resolve(id);
           },
         })
+        // The slot is held for the life of the run, not the request, and is
+        // released on every exit path - a leaked one would permanently shrink
+        // what this orchestrator can accept.
         .catch((err) => {
           if (started) console.error(`[run] failed:`, err);
           else reject(err);
-        });
+        })
+        .finally(() => slot.release());
     });
     return c.json({ runId }, 202);
   } catch (err) {
