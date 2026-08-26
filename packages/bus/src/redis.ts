@@ -2,6 +2,18 @@ import type { AgentId, AgentMessage } from "@kapi/protocol";
 import type { MessageBus, Unsubscribe } from "./types.ts";
 import { InProcessBus } from "./inprocess.ts";
 
+function redisUrlFromEnv(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const directUrl = env.REDIS_URL ?? env.UPSTASH_REDIS_URL;
+  if (directUrl) return directUrl;
+
+  const restUrl = env.UPSTASH_REDIS_REST_URL;
+  const token = env.UPSTASH_REDIS_REST_TOKEN;
+  if (!restUrl || !token) return undefined;
+
+  const host = new URL(restUrl).hostname;
+  return `rediss://default:${encodeURIComponent(token)}@${host}:6379`;
+}
+
 /**
  * Redis-backed bus for when the orchestrator runs more than one instance.
  *
@@ -15,11 +27,15 @@ export class RedisBus implements MessageBus {
   #pub: any = null;
   #channels = new Set<string>();
 
-  constructor(private url = process.env.REDIS_URL ?? process.env.UPSTASH_REDIS_URL) {}
+  constructor(private url = redisUrlFromEnv()) {}
 
   async #connect() {
     if (this.#pub) return;
-    if (!this.url) throw new Error("REDIS_URL is not set");
+    if (!this.url) {
+      throw new Error(
+        "Redis is not configured. Set REDIS_URL or both UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN.",
+      );
+    }
     const { default: Redis } = await import("ioredis");
     this.#pub = new Redis(this.url);
     this.#sub = new Redis(this.url);

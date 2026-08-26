@@ -19,17 +19,17 @@ export class OpenAICompatProvider implements LLMProvider {
 
   static groq() {
     return new OpenAICompatProvider("groq", "https://api.groq.com/openai/v1", process.env.GROQ_API_KEY, {
-      planning: process.env.KAPI_GROQ_PLANNING ?? "llama-3.3-70b-versatile",
-      coding: process.env.KAPI_GROQ_CODING ?? "llama-3.3-70b-versatile",
-      cheap: process.env.KAPI_GROQ_CHEAP ?? "llama-3.1-8b-instant",
+      planning: process.env.KAPI_GROQ_PLANNING ?? "openai/gpt-oss-20b",
+      coding: process.env.KAPI_GROQ_CODING ?? "qwen/qwen3.6-27b",
+      cheap: process.env.KAPI_GROQ_CHEAP ?? "qwen/qwen3.6-27b",
     });
   }
 
   static cerebras() {
     return new OpenAICompatProvider("cerebras", "https://api.cerebras.ai/v1", process.env.CEREBRAS_API_KEY, {
-      planning: process.env.KAPI_CEREBRAS_PLANNING ?? "llama-3.3-70b",
-      coding: process.env.KAPI_CEREBRAS_CODING ?? "llama-3.3-70b",
-      cheap: process.env.KAPI_CEREBRAS_CHEAP ?? "llama3.1-8b",
+      planning: process.env.KAPI_CEREBRAS_PLANNING ?? "gpt-oss-120b",
+      coding: process.env.KAPI_CEREBRAS_CODING ?? "gpt-oss-120b",
+      cheap: process.env.KAPI_CEREBRAS_CHEAP ?? "gpt-oss-120b",
     });
   }
 
@@ -43,7 +43,13 @@ export class OpenAICompatProvider implements LLMProvider {
       model,
       messages: opts.system ? [{ role: "system", content: opts.system }, ...messages] : messages,
       temperature: opts.temperature ?? 0.2,
-      max_tokens: opts.maxOutputTokens ?? 8192,
+      // Free-tier TPM limits include the requested completion budget. Callers
+      // may ask for 8k-32k outputs, which makes even a tiny prompt fail before
+      // generation on Groq. Keep failover usable and bounded.
+      max_tokens: Math.min(
+        opts.maxOutputTokens ?? 8192,
+        Number(process.env.KAPI_OPENAI_COMPAT_MAX_OUTPUT_TOKENS ?? 1024),
+      ),
     };
 
     const res = await fetch(`${this.baseUrl}/chat/completions`, {

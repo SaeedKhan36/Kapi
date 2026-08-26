@@ -19,6 +19,9 @@ export type Db = Awaited<ReturnType<typeof createDb>>;
  * PGlite is genuine Postgres compiled to WASM, so day-one development needs no
  * account, no container, and no network - and the schema is identical when we
  * later point DATABASE_URL at Neon.
+ *
+ * postgres.js uses `prepare: false` so the Neon pooler (PgBouncer transaction
+ * mode) can be used as DATABASE_URL without a separate direct connection.
  */
 export async function createDb(url = process.env.DATABASE_URL) {
   const inMemory = url === "memory" || url === ":memory:";
@@ -28,8 +31,23 @@ export async function createDb(url = process.env.DATABASE_URL) {
       import("drizzle-orm/postgres-js"),
       import("postgres"),
     ]);
-    const client = postgresMod.default(url, { max: 4, prepare: false });
-    return drizzle(client, { schema });
+    const client = postgresMod.default(url, {
+      max: 4,
+      prepare: false,
+      onnotice: () => {},
+    });
+    const db = drizzle(client, { schema });
+    try {
+      await ensureSchema({
+        exec: (sql) => client.unsafe(sql),
+      });
+    } catch (cause) {
+      throw new Error(
+        `could not initialise Postgres at ${describeDbTarget(url)}: ${String(cause)}`,
+        { cause },
+      );
+    }
+    return db;
   }
 
   const [{ drizzle }, { PGlite }] = await Promise.all([
@@ -72,8 +90,9 @@ export function describeDbTarget(url = process.env.DATABASE_URL): string {
 }
 
 /**
- * PGlite has no migration runner attached, so we create tables idempotently.
- * Kept in lockstep with schema.ts; drizzle-kit owns migrations for real Postgres.
+ * Create tables idempotently. PGlite has no migration runner; Neon/Postgres
+ * gets the same SQL so pointing DATABASE_URL at a fresh database is enough.
+ * Kept in lockstep with schema.ts.
  */
 async function ensureSchema(client: { exec: (sql: string) => Promise<unknown> }) {
   await client.exec(`
