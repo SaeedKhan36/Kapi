@@ -6,7 +6,7 @@
  * the store, which scopes reads, and the event hub, which fans out the live
  * feed. Both are exercised directly.
  */
-import { authMode, LOCAL_USER } from "../apps/orchestrator/src/auth.ts";
+import { authMode, LOCAL_USER, providerAllowed } from "../apps/orchestrator/src/auth.ts";
 import { issuerFromPublishableKey } from "../packages/identity/src/clerk.ts";
 import { EventHub } from "../apps/orchestrator/src/events.ts";
 import { Store } from "../apps/orchestrator/src/store.ts";
@@ -55,6 +55,20 @@ const main = async () => {
     String(issuerFromPublishableKey(clerkEnv.CLERK_PUBLISHABLE_KEY!)));
   check("a key that is not Clerk's yields no issuer",
     issuerFromPublishableKey("not-a-clerk-key") === null);
+
+  console.log("\n\x1b[1msandbox provider selection\x1b[0m\n");
+
+  // `local` runs agent commands as host processes with no isolation, so a
+  // caller choosing it on a shared deployment is code execution, not a
+  // preference. One operator picking it for their own machine is the point.
+  check("single operator may choose local", providerAllowed("none", "local"));
+  check("clerk may NOT choose local", !providerAllowed("clerk", "local"),
+    "otherwise any signed-in user gets RCE on the orchestrator");
+  check("workos may NOT choose local", !providerAllowed("workos", "local"));
+  check("multi-user may choose daytona", providerAllowed("clerk", "daytona"));
+  check("multi-user may choose docker", providerAllowed("workos", "docker"));
+  check("omitting the provider is fine", providerAllowed("clerk", undefined),
+    "falls back to SANDBOX_PROVIDER");
 
   console.log("\n\x1b[1mrun ownership\x1b[0m\n");
 

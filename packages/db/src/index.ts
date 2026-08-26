@@ -50,10 +50,21 @@ export async function createDb(url = process.env.DATABASE_URL) {
     return db;
   }
 
+  // Dynamic, and excluded from the production bundle: PGlite ships a WASM
+  // filesystem image that cannot be inlined. A built artifact therefore has no
+  // embedded database and needs a real DATABASE_URL - which a deployment wants
+  // regardless, since PGlite allows a single writer and could not be shared by
+  // two instances.
   const [{ drizzle }, { PGlite }] = await Promise.all([
     import("drizzle-orm/pglite"),
     import("@electric-sql/pglite"),
-  ]);
+  ]).catch((cause) => {
+    throw new Error(
+      "no embedded database available in this build - set DATABASE_URL to a Postgres " +
+      `connection string (free at neon.tech). (${String(cause)})`,
+      { cause },
+    );
+  });
   let client: InstanceType<typeof PGlite>;
   if (inMemory) {
     client = new PGlite();
@@ -94,6 +105,10 @@ export function describeDbTarget(url = process.env.DATABASE_URL): string {
  * gets the same SQL so pointing DATABASE_URL at a fresh database is enough.
  * Kept in lockstep with schema.ts.
  */
+export async function applyEmbeddedSchema(client: { exec: (sql: string) => Promise<unknown> }) {
+  return ensureSchema(client);
+}
+
 async function ensureSchema(client: { exec: (sql: string) => Promise<unknown> }) {
   await client.exec(`
     CREATE TABLE IF NOT EXISTS users (

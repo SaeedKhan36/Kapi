@@ -2,7 +2,7 @@ import type { CodingEngine, CodingResult } from "@kapi/agent-engine";
 import { createBranch, pushBranch } from "@kapi/agent-engine";
 import type { AgentChannel } from "@kapi/bus";
 import type { PlannedTask, ReviewVerdict } from "@kapi/protocol";
-import { blockingFindings, renderChangeRequest, workerId } from "@kapi/protocol";
+import { blockingFindings, detach, renderChangeRequest, workerId } from "@kapi/protocol";
 import { cloneRepo, taskBranch, type MergeResult, type SandboxProvider } from "@kapi/sandbox";
 
 export type WorkerConfig = {
@@ -56,7 +56,7 @@ export async function runWorkerTask(
 
   const log = (line: string) => {
     onLog?.(line);
-    void channel.send("master", "LOG", line, { taskId: task.id });
+    detach(channel.send("master", "LOG", line, { taskId: task.id }), "forwarding a worker log line");
   };
 
   try {

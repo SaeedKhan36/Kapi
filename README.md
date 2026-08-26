@@ -233,7 +233,7 @@ to, and it is a plain HTTP + WebSocket surface you can drive yourself.
 | `GET /api/github/repos/:owner/:repo/authorization` | whether a run here would be allowed, and how to fix it if not |
 | `GET /api/runs` | the caller's runs |
 | `GET /api/runs/:id` | one run with its tasks, agents, messages, artifacts |
-| `POST /api/runs` | start a run — `{ goal, repoUrl, baseBranch?, maxConcurrency?, maxTasks?, providerName? }` |
+| `POST /api/runs` | start a run — `{ goal, repoUrl, baseBranch?, maxConcurrency?, maxTasks?, providerName? }`; `429` when rate-limited or at the concurrent-run cap |
 | `WS /ws?runId=…&token=…` | live `status` / `plan` / `task` / `message` events |
 
 Everything but `/api/health` needs `Authorization: Bearer <session token>`
@@ -278,6 +278,25 @@ Built in, not bolted on:
   tokens in one early run.
 - **Provider failover.** Gemini → Groq → Cerebras behind one interface.
 - **Sandbox idle-TTL**, so a leaked Daytona sandbox cannot quietly burn credit.
+- **A ceiling on live sandboxes** (`MAX_CONCURRENT_SANDBOXES`, default 12).
+  `MAX_CONCURRENT_WORKERS` bounds one run, which is the wrong unit for money —
+  ten runs of four workers is forty billable sandboxes and no single run has
+  misbehaved. Enforced by wrapping the provider, so it covers the planner, the
+  workers and the reviewers without four call sites having to remember.
+- **Limits on what one caller may ask for** — `MAX_RUNS_PER_HOUR` as a token
+  bucket, plus `MAX_CONCURRENT_RUNS` and `MAX_CONCURRENT_RUNS_PER_USER`. A
+  refusal is a `429` carrying `Retry-After`. Without these, one caller can
+  queue a hundred runs that starve everyone else and spend a daily LLM quota on
+  planning before a sandbox is ever created.
+
+Both ceilings are **per orchestrator process**, so a multi-instance deployment
+should divide its budget between instances. `GET /api/health` reports the
+configured limits and where the process currently sits against them.
+
+> Keep `MAX_CONCURRENT_SANDBOXES` above `MAX_CONCURRENT_WORKERS`: a worker
+> holds its own sandbox while the reviewer opens a second one to read the
+> branch. A creation that cannot get a slot within `SANDBOX_SLOT_WAIT_MS`
+> fails with a message naming the cap, rather than waiting forever.
 
 ### Measured, not assumed: Gemini's free tier has no Pro
 
@@ -314,11 +333,68 @@ pnpm typecheck
 ```bash
 pnpm dev:api        # orchestrator only, watch mode
 pnpm dev:web        # dashboard only (expects the API on :8787)
-pnpm db:push        # push the Drizzle schema — real Postgres only; PGlite self-creates
 pnpm db:studio      # browse runs, tasks, and the message log
 ```
 
 Requires Node 22+ and pnpm 10.
+
+## Deploying
+
+```bash
+pnpm build          # dist/orchestrator.mjs + dist/migrate.mjs + the dashboard
+pnpm db:migrate     # apply the schema
+pnpm start          # node dist/orchestrator.mjs
+```
+
+Or as containers:
+
+```bash
+docker compose up --build
+```
+
+The orchestrator bundles to a single file that plain `node` runs — no pnpm, no
+TypeScript, no `node_modules`. The dashboard's production server serves the
+build and forwards `/api` and `/ws` to `ORCHESTRATOR_URL`, so the browser stays
+same-origin exactly as it does behind Vite in development.
+
+**A deployment needs a real `DATABASE_URL`.** PGlite ships WebAssembly that
+cannot be bundled, so a built artifact has no embedded database — which is the
+right constraint anyway, since PGlite allows one writer and could not be shared
+by two instances.
+
+**More than one orchestrator needs `KAPI_BUS=redis`.** Agents reach each other
+over the bus, and the in-process one stops at the process boundary — two
+instances on it produce workers that cannot hear their teammates. `REDIS_URL`
+must be the TCP endpoint (`redis://` or `rediss://`), not a REST one: the bus
+holds a subscription open. On Upstash that is the connection string on the
+database page, and its password is **not** the REST token.
+
+Asking for Redis and not getting it is a startup failure, not a fallback. A bus
+that silently degrades to in-process delivery presents as a teammate that
+stopped replying, which is far harder to diagnose than a container that refuses
+to boot.
+
+### Migrations
+
+`packages/db/migrations` holds ordered SQL, generated with `pnpm db:generate`
+and applied with `pnpm db:migrate`. `db:push` is still there for prototyping,
+but it resolves drift by dropping whatever does not match, which is not
+something to point at a database holding real runs.
+
+| | |
+|---|---|
+| `pnpm db:migrate` | apply everything pending |
+| `pnpm db:migrate --status` | what is applied, what is not |
+| `pnpm db:migrate --baseline` | record migrations as applied **without running them** |
+
+`--baseline` is for adopting a database that already matches the schema — one
+built with `db:push` before migrations existed. Running the first migration
+there would fail on its first `CREATE TABLE`; baselining writes the same
+bookkeeping the migrator would have, so later migrations apply normally.
+
+`pnpm test:unit` applies both the migrations and the embedded schema to a fresh
+in-memory Postgres and compares them column by column, because they are written
+by hand in two places and drift silently otherwise.
 
 ## Status
 

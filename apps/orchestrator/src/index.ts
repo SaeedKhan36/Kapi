@@ -8,7 +8,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
 import { createDb, describeDbTarget } from "@kapi/db";
-import { createMessageBus } from "@kapi/bus";
+import { createMessageBus, readyMessageBus, RedisBus } from "@kapi/bus";
 import {
   createRepoAccess, githubAppConfigured, listBranches, listRepositories,
   parseRepoUrl, IdentityError,
@@ -16,7 +16,9 @@ import {
 import { Store } from "./store.ts";
 import { RunEngine, RunNotAuthorizedError } from "./run-engine.ts";
 import { EventHub } from "./events.ts";
-import { createAuth, type AuthedEnv } from "./auth.ts";
+import { createAuth, providerAllowed, type AuthedEnv } from "./auth.ts";
+import { createLimits } from "./limits.ts";
+import { sharedSandboxLimiter } from "@kapi/sandbox";
 import { repoAccessFor } from "./github-routes.ts";
 
 const CreateRunSchema = z.object({
@@ -30,9 +32,16 @@ const CreateRunSchema = z.object({
 
 const db = await createDb();
 const store = new Store(db);
+// Constructing throws immediately on a misconfigured KAPI_BUS=redis; connecting
+// catches an unreachable server or a wrong password. Both belong at boot: a bus
+// that fails later does not look like a failure, it looks like agents that
+// stopped hearing each other halfway through a run.
 const bus = createMessageBus();
+await readyMessageBus(bus);
 const hub = new EventHub();
 const auth = createAuth(store);
+const limits = createLimits();
+const sandboxes = sharedSandboxLimiter();
 const engine = new RunEngine(store, bus, { onEvent: (e) => hub.publish(e) });
 
 /** In single-operator mode there is one user, so scoping reads is meaningless. */
@@ -52,6 +61,17 @@ app.get("/api/health", (c) =>
     githubApp: githubAppConfigured(),
     pushEnabled: Boolean(process.env.GITHUB_TOKEN) || githubAppConfigured(),
     clients: hub.clientCount,
+    // What this process will and will not spend, and where it currently sits.
+    // Worth publishing: a run refused as rate-limited is otherwise
+    // indistinguishable from one refused for any other reason.
+    limits: {
+      runsPerHour: limits.rate.perHour,
+      burst: limits.rate.burst,
+      concurrentRuns: `${limits.runs.active}/${limits.runs.maxTotal}`,
+      concurrentRunsPerUser: limits.runs.maxPerUser,
+      sandboxes: `${sandboxes.active}/${sandboxes.max}`,
+      sandboxesWaiting: sandboxes.waiting,
+    },
   }),
 );
 
@@ -161,11 +181,37 @@ app.post("/api/runs", async (c) => {
     return c.json({ error: "repoUrl must be a GitHub repository" }, 400);
   }
 
+  if (!providerAllowed(auth.mode, parsed.data.providerName)) {
+    return c.json({
+      error: "the local sandbox provider is not available on a multi-user deployment",
+      code: "PROVIDER_NOT_ALLOWED",
+    }, 403);
+  }
+
   const user = c.get("user");
+
+  // Cheapest check first: refusing a rate-limited caller must not cost a
+  // GitHub round trip, or the limit becomes its own amplification.
+  const rate = limits.rate.take(user.id);
+  if (!rate.ok) {
+    c.header("retry-after", String(rate.retryAfterSeconds));
+    return c.json({
+      error: rate.reason,
+      code: "RATE_LIMITED",
+      retryAfterSeconds: rate.retryAfterSeconds,
+    }, 429);
+  }
+
+  const slot = limits.runs.admit(user.id);
+  if (!slot.ok) {
+    return c.json({ error: slot.reason, code: "TOO_MANY_RUNS" }, 429);
+  }
+
   let repoAccess;
   try {
     repoAccess = await repoAccessFor(auth, user);
   } catch (err) {
+    slot.release();
     return githubError(c, err);
   }
 
@@ -184,10 +230,14 @@ app.post("/api/runs", async (c) => {
             resolve(id);
           },
         })
+        // The slot is held for the life of the run, not the request, and is
+        // released on every exit path - a leaked one would permanently shrink
+        // what this orchestrator can accept.
         .catch((err) => {
           if (started) console.error(`[run] failed:`, err);
           else reject(err);
-        });
+        })
+        .finally(() => slot.release());
     });
     return c.json({ runId }, 202);
   } catch (err) {
@@ -228,7 +278,8 @@ const server = serve({ fetch: app.fetch, port }, () => {
   console.log(`  http  http://localhost:${port}`);
   console.log(`  ws    ws://localhost:${port}/ws`);
   console.log(`  db    ${describeDbTarget()}`);
-  console.log(`  llm   ${process.env.GEMINI_API_KEY ? "configured" : "NOT configured - set GEMINI_API_KEY"}\n`);
+  console.log(`  llm   ${process.env.GEMINI_API_KEY ? "configured" : "NOT configured - set GEMINI_API_KEY"}`);
+  console.log(`  bus   ${bus instanceof RedisBus ? bus.describe : "in-process (single instance)"}\n`);
 });
 
 /**
@@ -274,6 +325,23 @@ server.on("upgrade", (req, socket, head) => {
       ws.on("error", remove);
     });
   })();
+});
+
+/**
+ * Last resort, not a licence to leak rejections.
+ *
+ * Every known source is caught at the point it is created (see `detach`), and
+ * this exists for the ones nobody has found yet. Node's default is to abort on
+ * an unhandled rejection, which for this process means killing every run in
+ * flight and orphaning the sandboxes they are paying for by the second -
+ * strictly worse than logging and carrying on. Anything logged here is a bug
+ * to fix at its source.
+ */
+process.on("unhandledRejection", (reason) => {
+  console.error(
+    "[kapi] unhandled rejection (continuing):",
+    reason instanceof Error ? (reason.stack ?? reason.message) : reason,
+  );
 });
 
 const shutdown = async () => {

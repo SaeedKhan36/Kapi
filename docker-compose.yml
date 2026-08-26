@@ -1,0 +1,44 @@
+# Runs the dashboard and the orchestrator together.
+#
+#   cp .env.example .env    # fill in GEMINI_API_KEY at minimum
+#   docker compose up --build
+#
+# Postgres is not included on purpose. The orchestrator falls back to an
+# embedded database when DATABASE_URL is unset, which is enough to try it, and
+# a real deployment should point at a managed instance rather than a container
+# whose volume is one `docker compose down -v` from gone.
+
+services:
+  migrate:
+    build: { context: ., target: orchestrator }
+    command: ["node", "dist/migrate.mjs"]
+    env_file: [.env]
+    # Nothing to do without a real Postgres; the embedded database creates its
+    # own schema, and the migrator exits cleanly saying so.
+    restart: "no"
+
+  orchestrator:
+    build: { context: ., target: orchestrator }
+    env_file: [.env]
+    environment:
+      ORCHESTRATOR_PORT: 8787
+    ports: ["8787:8787"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    # Sandboxes are billed per second, so the container must be allowed to run
+    # its shutdown path rather than being killed at the default 10s.
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  web:
+    build: { context: ., target: web }
+    environment:
+      PORT: 3000
+      # Baked into the bundle at build time, not read at runtime - see
+      # apps/web/src/lib/auth.ts. Set it in .env before building, or the
+      # dashboard ships without a sign-in button while the API demands one.
+      VITE_WORKOS_CLIENT_ID: ${VITE_WORKOS_CLIENT_ID:-}
+      VITE_WORKOS_REDIRECT_URI: ${VITE_WORKOS_REDIRECT_URI:-}
+    ports: ["3000:3000"]
+    depends_on: [orchestrator]
+    restart: unless-stopped
