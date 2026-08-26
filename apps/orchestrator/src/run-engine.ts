@@ -116,7 +116,7 @@ export class RunEngine {
       }
 
       const graph = this.opts.planOverride
-        ? await this.#usePlanOverride(runId, req, master)
+        ? await this.#usePlanOverride(runId, req, master, provider, baseBranch, idleTtlSeconds)
         : await this.#plan(runId, req, provider, llm, master, baseBranch, idleTtlSeconds);
 
       if (req.planOnly) {
@@ -149,7 +149,23 @@ export class RunEngine {
     return { runId, outcomes };
   }
 
-  async #usePlanOverride(runId: string, req: RunRequest, master: AgentChannel): Promise<TaskGraph> {
+  async #usePlanOverride(
+    runId: string, req: RunRequest, master: AgentChannel,
+    provider: SandboxProvider, baseBranch: string, idleTtlSeconds: number,
+  ): Promise<TaskGraph> {
+    // Still needs a sandbox: the repo has to be prepared even though the plan
+    // is already known.
+    const box = await provider.create({
+      name: `${runId}-prepare`,
+      env: { KAPI_RUN_ID: runId, KAPI_AGENT_ID: "master" },
+      idleTtlSeconds,
+    });
+    try {
+      await this.#prepareRepo(runId, req, provider, box.id, baseBranch);
+    } finally {
+      await provider.destroy(box.id).catch(() => {});
+    }
+
     const graph = await this.opts.planOverride!(req);
     await this.store.savePlan(runId, graph);
     await master.send("broadcast", "PLAN_READY", `planned ${graph.tasks.length} task(s)`, {
@@ -225,6 +241,53 @@ export class RunEngine {
     }
   }
 
+  /**
+   * Phase 0: get the repository into a state the run can work with.
+   *
+   * Always runs, including when a stored plan is reused — an integration branch
+   * is infrastructure, not a planning artefact, and skipping it leaves every
+   * worker branching from the wrong place.
+   */
+  async #prepareRepo(
+    runId: string, req: RunRequest, provider: SandboxProvider,
+    sandboxId: string, baseBranch: string,
+  ): Promise<void> {
+    await cloneRepo(provider, sandboxId, {
+      repoUrl: req.repoUrl,
+      branch: baseBranch,
+      token: process.env.GITHUB_TOKEN,
+      identity: this.#identity(),
+      dir: "repo",
+      depth: 50,
+    });
+
+    // A brand-new GitHub repo has no commits, so there is no HEAD to diff
+    // against and no base for a PR. Give it a root commit first.
+    if (await isEmptyRepo(provider, sandboxId, "repo")) {
+      if (!process.env.GITHUB_TOKEN) {
+        throw new Error(`${req.repoUrl} is empty and GITHUB_TOKEN is not set, so it cannot be initialised`);
+      }
+      this.#emit({ kind: "status", runId, status: "preparing", detail: "repository is empty - creating base branch" });
+      await seedEmptyRepo(provider, sandboxId, {
+        branch: baseBranch,
+        token: process.env.GITHUB_TOKEN,
+        dir: "repo",
+        readmeTitle: req.repoUrl.split("/").pop()?.replace(/\.git$/, "") ?? "Project",
+      });
+    }
+
+    if (process.env.GITHUB_TOKEN) {
+      // Every worker branches from here, and finished work merges back into it,
+      // so a dependant actually inherits what it was waiting on.
+      await createRemoteBranch(provider, sandboxId, {
+        branch: integrationBranch(runId),
+        from: baseBranch,
+        token: process.env.GITHUB_TOKEN,
+        dir: "repo",
+      });
+    }
+  }
+
   /** Phase 1: the master reads the repo read-only and produces a validated DAG. */
   async #plan(
     runId: string, req: RunRequest, provider: SandboxProvider, llm: RoutedLLM,
@@ -243,38 +306,7 @@ export class RunEngine {
     await this.store.upsertAgent({ runId, agentId: "master", role: "master", status: "planning", sandboxId: box.id });
 
     try {
-      await cloneRepo(provider, box.id, {
-        repoUrl: req.repoUrl,
-        branch: baseBranch,
-        token: process.env.GITHUB_TOKEN,
-        identity: this.#identity(),
-        dir: "repo",
-        depth: 50,
-      });
-
-      // A brand-new GitHub repo has no commits, so there is no HEAD to diff
-      // against and no base for a PR. Give it a root commit before planning.
-      if (await isEmptyRepo(provider, box.id, "repo")) {
-        if (!process.env.GITHUB_TOKEN) {
-          throw new Error(`${req.repoUrl} is empty and GITHUB_TOKEN is not set, so it cannot be initialised`);
-        }
-        this.#emit({ kind: "status", runId, status: "planning", detail: "repository is empty - creating base branch" });
-        await seedEmptyRepo(provider, box.id, {
-          branch: baseBranch,
-          token: process.env.GITHUB_TOKEN,
-          dir: "repo",
-          readmeTitle: req.repoUrl.split("/").pop()?.replace(/\.git$/, "") ?? "Project",
-        });
-      }
-
-      // Every worker branches from here, and finished work merges back into it,
-      // so a dependant actually inherits what it was waiting on.
-      await createRemoteBranch(provider, box.id, {
-        branch: integrationBranch(runId),
-        from: baseBranch,
-        token: process.env.GITHUB_TOKEN,
-        dir: "repo",
-      });
+      await this.#prepareRepo(runId, req, provider, box.id, baseBranch);
 
       const { graph, digest, attempts } = await planFromSandbox(
         llm, provider, box.id, req.goal, { cwd: "repo", maxTasks: req.maxTasks },
