@@ -8,7 +8,7 @@ import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
 import { createDb, describeDbTarget } from "@kapi/db";
-import { createMessageBus } from "@kapi/bus";
+import { createMessageBus, readyMessageBus, RedisBus } from "@kapi/bus";
 import {
   createRepoAccess, githubAppConfigured, listBranches, listRepositories,
   parseRepoUrl, WorkOSError,
@@ -30,7 +30,12 @@ const CreateRunSchema = z.object({
 
 const db = await createDb();
 const store = new Store(db);
+// Constructing throws immediately on a misconfigured KAPI_BUS=redis; connecting
+// catches an unreachable server or a wrong password. Both belong at boot: a bus
+// that fails later does not look like a failure, it looks like agents that
+// stopped hearing each other halfway through a run.
 const bus = createMessageBus();
+await readyMessageBus(bus);
 const hub = new EventHub();
 const auth = createAuth(store);
 const engine = new RunEngine(store, bus, { onEvent: (e) => hub.publish(e) });
@@ -220,7 +225,8 @@ const server = serve({ fetch: app.fetch, port }, () => {
   console.log(`  http  http://localhost:${port}`);
   console.log(`  ws    ws://localhost:${port}/ws`);
   console.log(`  db    ${describeDbTarget()}`);
-  console.log(`  llm   ${process.env.GEMINI_API_KEY ? "configured" : "NOT configured - set GEMINI_API_KEY"}\n`);
+  console.log(`  llm   ${process.env.GEMINI_API_KEY ? "configured" : "NOT configured - set GEMINI_API_KEY"}`);
+  console.log(`  bus   ${bus instanceof RedisBus ? bus.describe : "in-process (single instance)"}\n`);
 });
 
 /**

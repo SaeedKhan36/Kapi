@@ -336,6 +336,18 @@ cannot be bundled, so a built artifact has no embedded database — which is the
 right constraint anyway, since PGlite allows one writer and could not be shared
 by two instances.
 
+**More than one orchestrator needs `KAPI_BUS=redis`.** Agents reach each other
+over the bus, and the in-process one stops at the process boundary — two
+instances on it produce workers that cannot hear their teammates. `REDIS_URL`
+must be the TCP endpoint (`redis://` or `rediss://`), not a REST one: the bus
+holds a subscription open. On Upstash that is the connection string on the
+database page, and its password is **not** the REST token.
+
+Asking for Redis and not getting it is a startup failure, not a fallback. A bus
+that silently degrades to in-process delivery presents as a teammate that
+stopped replying, which is far harder to diagnose than a container that refuses
+to boot.
+
 ### Migrations
 
 `packages/db/migrations` holds ordered SQL, generated with `pnpm db:generate`

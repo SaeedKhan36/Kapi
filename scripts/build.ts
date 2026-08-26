@@ -32,13 +32,14 @@ import { build } from "esbuild";
  *   DATABASE_URL, which is what a deployment should have anyway: PGlite is
  *   single-writer and would not survive a second container.
  *
- *   ioredis is not installed at all. The Redis bus reaches it through a
- *   dynamic import so a deployment on the in-process bus never needs it.
- *
  * Each is reached through a dynamic import, so an absent one surfaces as a
  * runtime error on the path that needs it rather than a failure to start.
+ *
+ * ioredis is deliberately NOT excluded: a multi-instance deployment needs the
+ * Redis bus, and an image that cannot provide it would be a worse default than
+ * the megabyte it costs.
  */
-const EXTERNAL = ["@electric-sql/pglite", "drizzle-orm/pglite", "ioredis"];
+const EXTERNAL = ["@electric-sql/pglite", "drizzle-orm/pglite"];
 
 /**
  * The migrator ships alongside the server.
