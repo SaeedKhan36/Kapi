@@ -102,7 +102,7 @@ const runOnce = async (verdicts: ReviewVerdict[], maxReviewRounds = 1) => {
 
 // Stub git/network so the scheduler logic is what is under test.
 const realExec = LocalProvider.prototype.exec;
-LocalProvider.prototype.exec = async function (id: string, cmd: string, opts?: any) {
+LocalProvider.prototype.exec = async function (this: LocalProvider, id: string, cmd: string, opts?: any) {
   if (/^git |^rm -rf/.test(cmd.trim())) return { exitCode: 0, stdout: "abc123", stderr: "", durationMs: 0 };
   return realExec.call(this, id, cmd, opts);
 } as any;
