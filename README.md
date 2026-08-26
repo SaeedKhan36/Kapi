@@ -102,6 +102,11 @@ Interfaces with more than one implementation, so no vendor is load-bearing:
 | `packages/bus` | `MessageBus` | in-process, Redis |
 | `packages/db` | Drizzle schema | PGlite, Postgres/Neon |
 
+> **PGlite is single-writer.** `DATABASE_URL` unset means an embedded database in
+> `.kapi/db`, and two kapi processes cannot share it — running the orchestrator
+> and a CLI run at once corrupts the directory. Use `DATABASE_URL=memory` for
+> throwaway work, or point it at Neon when more than one process is involved.
+
 The rest are plumbing: `packages/protocol` (zod wire types — messages, task
 graph, shared contract), `packages/agent-runtime` (master planner and repo
 context), `packages/env` (dependency-free `.env` loader that never clobbers real

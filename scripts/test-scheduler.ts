@@ -66,7 +66,9 @@ class StubProvider extends LocalProvider {
 }
 
 const run = async (failTasks: Set<string> = new Set()) => {
-  const db = await createDb();
+  // Ephemeral database: the scheduler is what is under test, and sharing the
+  // development PGlite directory corrupts it.
+  const db = await createDb("memory");
   const store = new Store(db);
   const bus = new InProcessBus();
   const engine = new FakeEngine(failTasks);

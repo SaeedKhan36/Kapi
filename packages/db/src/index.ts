@@ -7,16 +7,23 @@ export { schema as tables };
 export type Db = Awaited<ReturnType<typeof createDb>>;
 
 /**
- * Postgres, two ways, one schema:
- *   DATABASE_URL set   -> real Postgres (Neon in production)
- *   DATABASE_URL unset -> embedded PGlite in .kapi/db
+ * Postgres, three ways, one schema:
+ *   DATABASE_URL=postgres://...  -> real Postgres (Neon in production)
+ *   DATABASE_URL=memory          -> ephemeral in-process PGlite
+ *   DATABASE_URL unset           -> embedded PGlite in .kapi/db
+ *
+ * PGlite holds a single-writer data directory, so tests must never share the
+ * development one: concurrent access corrupts it and the next open aborts
+ * inside the WASM runtime.
  *
  * PGlite is genuine Postgres compiled to WASM, so day-one development needs no
  * account, no container, and no network - and the schema is identical when we
  * later point DATABASE_URL at Neon.
  */
 export async function createDb(url = process.env.DATABASE_URL) {
-  if (url) {
+  const inMemory = url === "memory" || url === ":memory:";
+
+  if (url && !inMemory) {
     const [{ drizzle }, postgresMod] = await Promise.all([
       import("drizzle-orm/postgres-js"),
       import("postgres"),
@@ -29,14 +36,32 @@ export async function createDb(url = process.env.DATABASE_URL) {
     import("drizzle-orm/pglite"),
     import("@electric-sql/pglite"),
   ]);
-  mkdirSync(".kapi", { recursive: true });
-  const client = new PGlite(".kapi/db");
+  let client: InstanceType<typeof PGlite>;
+  if (inMemory) {
+    client = new PGlite();
+  } else {
+    mkdirSync(".kapi", { recursive: true });
+    client = new PGlite(".kapi/db");
+  }
   const db = drizzle(client, { schema });
-  await ensureSchema(client);
+  try {
+    await ensureSchema(client);
+  } catch (cause) {
+    throw new Error(
+      inMemory
+        ? `could not initialise in-memory database: ${String(cause)}`
+        : `could not open .kapi/db. PGlite allows a single writer, so this usually ` +
+          `means another kapi process (an orchestrator or a run) already has it open. ` +
+          `Stop the other process, or set DATABASE_URL to a real Postgres. ` +
+          `If the directory is corrupted, delete .kapi/db and retry. (${String(cause)})`,
+      { cause },
+    );
+  }
   return db;
 }
 
 export function describeDbTarget(url = process.env.DATABASE_URL): string {
+  if (url === "memory" || url === ":memory:") return "pglite (in-memory)";
   if (!url) return "pglite (embedded, .kapi/db)";
   try {
     const u = new URL(url);
