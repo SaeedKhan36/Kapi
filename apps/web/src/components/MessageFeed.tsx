@@ -5,6 +5,8 @@ import { cn } from "~/lib/cn.ts";
 
 const TYPE_TONE: Record<string, string> = {
   TASK_COMPLETED: "text-ok",
+  REVIEW_APPROVED: "text-ok",
+  CODE_REVIEW_REQUESTED: "text-accent",
   API_READY: "text-ok",
   SCHEMA_READY: "text-ok",
   PLAN_READY: "text-accent",

@@ -107,6 +107,25 @@ graph, shared contract), `packages/agent-runtime` (master planner and repo
 context), `packages/env` (dependency-free `.env` loader that never clobbers real
 deployment config).
 
+### The review loop
+
+Nothing merges unless a Review Agent approves it. After a worker pushes, a
+reviewer reads the branch's diff **from its own read-only sandbox** — it judges
+what actually landed, not whatever state the worker's filesystem was left in.
+
+Only `blocker` and `major` findings stop a merge; `minor` and `nit` ride along
+on the pull request for a human to weigh. A reviewer that blocks on style
+becomes a loop the worker cannot satisfy.
+
+The stated decision is reconciled against the findings, because models regularly
+say "approve" while listing a blocker. The findings are the evidence, so they
+win. On a change request the worker gets a bounded number of revision attempts
+(`--review-rounds`, default 1) with the blocking findings as its new
+instruction; if it still fails, the branch stays pushed and unmerged for a
+human, and the run reports the task as failed rather than quietly shipping it.
+
+Each review costs exactly one LLM request. `--no-review` skips it.
+
 ### Two ideas worth knowing
 
 **The shared contract prevents deadlock.** Workers run concurrently and cannot

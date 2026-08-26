@@ -11,6 +11,7 @@ import {
 } from "@kapi/sandbox";
 import { openPullRequest, parseRepoUrl } from "./github.ts";
 import { renderContract } from "./contract.ts";
+import { runReview } from "./review-runner.ts";
 import { runWorkerTask, type WorkerOutcome } from "./worker-runner.ts";
 import type { Store } from "./store.ts";
 
@@ -21,6 +22,10 @@ export type RunRequest = {
   maxConcurrency?: number;
   maxTasks?: number;
   providerName?: ProviderName;
+  /** Skip code review entirely. Each review costs one LLM request. */
+  skipReview?: boolean;
+  /** Revision attempts allowed after a change request. */
+  maxReviewRounds?: number;
   /** Stop after planning, without dispatching any worker. */
   planOnly?: boolean;
   /**
@@ -212,10 +217,20 @@ export class RunEngine {
         const task = graph.tasks.find((t) => t.id === taskId);
         const files = o.filesChanged.slice(0, 12).map((f) => f.path).join(", ");
         const more = o.filesChanged.length > 12 ? `, +${o.filesChanged.length - 12} more` : "";
+        const verdict = o.review
+          ? `\n_Reviewed: **${o.review.decision === "approve" ? "approved" : "changes requested"}**` +
+            `${o.reviewRounds > 1 ? ` after ${o.reviewRounds - 1} revision(s)` : ""} — ${o.review.summary}_`
+          : "";
+        const advisory = (o.review?.findings ?? []).filter((f) => f.severity === "minor" || f.severity === "nit");
+        const notes = advisory.length
+          ? `\n\nReviewer notes (non-blocking):\n${advisory.map((f) => `- ${f.file ? `\`${f.file}\`: ` : ""}${f.issue}`).join("\n")}`
+          : "";
         return [
           `### ${task?.title ?? taskId}`,
           o.summary,
           o.filesChanged.length ? `\n\`${files}${more}\`` : "",
+          verdict,
+          notes,
         ].filter(Boolean).join("\n");
       }),
       orphaned.length
@@ -361,6 +376,9 @@ export class RunEngine {
           assignedTo: worker, startedAt: new Date(), branch: `kapi/run-${runId}/${task.id}`,
         });
         await this.store.upsertAgent({ runId, agentId: worker, role: task.role, status: "running" });
+        if (!req.skipReview) {
+          await this.store.upsertAgent({ runId, agentId: "worker:reviewer", role: "reviewer", status: "idle" });
+        }
         this.#emit({ kind: "task", runId, taskId: task.id, status: "running" });
 
         const channel = new AgentChannel(this.bus, runId, worker);
@@ -383,6 +401,28 @@ export class RunEngine {
               githubToken: process.env.GITHUB_TOKEN, provider, engine, contract,
               identity: this.#identity(),
               idleTtlSeconds: cfg.idleTtlSeconds,
+              maxReviewRounds: req.maxReviewRounds ?? 1,
+              review: req.skipReview
+                ? undefined
+                : async ({ branch, task: reviewed, summary }) => {
+                    const verdict = await runReview(llm, provider, {
+                      runId,
+                      repoUrl: req.repoUrl,
+                      integration: integrationBranch(runId),
+                      branch,
+                      task: reviewed,
+                      contract,
+                      workerSummary: summary,
+                      githubToken: process.env.GITHUB_TOKEN,
+                      idleTtlSeconds: cfg.idleTtlSeconds,
+                    });
+                    await this.store.saveArtifact(runId, "review", verdict, reviewed.id);
+                    this.#emit({
+                      kind: "task", runId, taskId: reviewed.id, status: "review",
+                      detail: `review: ${verdict.decision} — ${verdict.summary}`,
+                    });
+                    return verdict;
+                  },
               mergeBack: process.env.GITHUB_TOKEN
                 ? ({ sandboxId, branch }) =>
                     this.#withMergeLock(() =>

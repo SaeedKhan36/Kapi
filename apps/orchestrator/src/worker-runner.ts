@@ -1,8 +1,8 @@
 import type { CodingEngine, CodingResult } from "@kapi/agent-engine";
 import { createBranch, pushBranch } from "@kapi/agent-engine";
 import type { AgentChannel } from "@kapi/bus";
-import type { PlannedTask } from "@kapi/protocol";
-import { workerId } from "@kapi/protocol";
+import type { PlannedTask, ReviewVerdict } from "@kapi/protocol";
+import { blockingFindings, renderChangeRequest, workerId } from "@kapi/protocol";
 import { cloneRepo, taskBranch, type MergeResult, type SandboxProvider } from "@kapi/sandbox";
 
 export type WorkerConfig = {
@@ -21,6 +21,10 @@ export type WorkerConfig = {
    * branch race. Omitted when there is nowhere to push.
    */
   mergeBack?: (args: { sandboxId: string; branch: string }) => Promise<MergeResult>;
+  /** Judges the pushed branch. Omitted to skip review entirely. */
+  review?: (args: { branch: string; task: PlannedTask; summary: string }) => Promise<ReviewVerdict>;
+  /** How many times a worker may revise after a change request. */
+  maxReviewRounds?: number;
 };
 
 export type WorkerOutcome = CodingResult & {
@@ -28,6 +32,8 @@ export type WorkerOutcome = CodingResult & {
   pushed: boolean;
   merged: boolean;
   mergeConflict: boolean;
+  review: ReviewVerdict | null;
+  reviewRounds: number;
   sandboxSeconds: number;
 };
 
@@ -85,7 +91,7 @@ export async function runWorkerTask(
     const ctx = { provider: cfg.provider, sandboxId, cwd: "repo", onLog: log };
     await cfg.engine.ensureInstalled(ctx);
 
-    const result = await cfg.engine.runTask(ctx, {
+    let result = await cfg.engine.runTask(ctx, {
       taskId: task.id,
       title: task.title,
       instruction: task.instruction,
@@ -94,40 +100,97 @@ export async function runWorkerTask(
       touches: task.touches,
     });
 
+    const push = async () => {
+      if (!cfg.githubToken) return false;
+      try {
+        await pushBranch(cfg.provider, sandboxId, "repo", branch, cfg.githubToken);
+        return true;
+      } catch (err) {
+        log(`[worker] push failed: ${err instanceof Error ? err.message : String(err)}`);
+        return false;
+      }
+    };
+
     let pushed = false;
     let merged = false;
     let mergeConflict = false;
+    let review: ReviewVerdict | null = null;
+    let reviewRounds = 0;
 
-    if (result.commits.length > 0 && cfg.githubToken) {
-      try {
-        await pushBranch(cfg.provider, sandboxId, "repo", branch, cfg.githubToken);
-        pushed = true;
-      } catch (err) {
-        log(`[worker] push failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
+    if (result.commits.length > 0) pushed = await push();
 
-      // Merge before the sandbox is destroyed, so dependants inherit this work.
-      if (pushed && result.ok && cfg.mergeBack) {
-        const merge = await cfg.mergeBack({ sandboxId, branch });
-        merged = merge.ok;
-        mergeConflict = merge.conflicted;
-        if (!merge.ok) {
-          log(`[worker] merge into integration ${merge.conflicted ? "conflicted" : "failed"}: ${merge.detail}`);
-          await channel.send("master", merge.conflicted ? "BLOCKED" : "TASK_FAILED",
-            `could not merge ${branch} into the integration branch: ${merge.detail}`,
-            { taskId: task.id });
+    // --- review, with a bounded chance to address blocking findings ---
+    if (pushed && cfg.review) {
+      const maxRounds = cfg.maxReviewRounds ?? 1;
+
+      for (let round = 0; round <= maxRounds; round++) {
+        await channel.send("master", "CODE_REVIEW_REQUESTED", `review ${branch}`, {
+          taskId: task.id, files: result.filesChanged,
+        });
+
+        review = await cfg.review({ branch, task, summary: result.summary });
+        reviewRounds = round + 1;
+
+        const blocking = blockingFindings(review);
+        if (review.decision === "approve") {
+          log(`[review] approved: ${review.summary}`);
+          await channel.send("master", "REVIEW_APPROVED", review.summary, {
+            taskId: task.id, status: "review",
+          });
+          break;
         }
+
+        log(`[review] changes requested (${blocking.length} blocking): ${review.summary}`);
+        await channel.send("master", "CHANGE_REQUESTED", review.summary, {
+          taskId: task.id,
+          files: blocking.filter((f) => f.file).map((f) => ({ path: f.file!, action: "modified" as const })),
+        });
+
+        // Out of rounds: leave the branch pushed and unmerged for a human.
+        if (round === maxRounds) {
+          log(`[review] no revision rounds left; leaving ${branch} for human review`);
+          break;
+        }
+
+        // Revise: same sandbox, same branch, instruction replaced by the findings.
+        result = await cfg.engine.runTask(ctx, {
+          taskId: task.id,
+          title: `${task.title} (revision ${round + 1})`,
+          instruction: `${task.instruction}\n\n---\n\n${renderChangeRequest(review)}`,
+          contract: cfg.contract,
+          acceptance: task.acceptance,
+          touches: [...new Set([...task.touches, ...blocking.map((f) => f.file).filter(Boolean) as string[]])],
+        });
+        pushed = await push();
+        if (!pushed) break;
       }
     }
 
-    await channel.send("master", result.ok ? "TASK_COMPLETED" : "TASK_FAILED", result.summary, {
+    const approved = review === null || review.decision === "approve";
+    const ok = result.ok && approved;
+
+    // Merge only approved work, and only while the sandbox is still alive, so
+    // dependants inherit it.
+    if (pushed && ok && cfg.mergeBack) {
+      const merge = await cfg.mergeBack({ sandboxId, branch });
+      merged = merge.ok;
+      mergeConflict = merge.conflicted;
+      if (!merge.ok) {
+        log(`[worker] merge into integration ${merge.conflicted ? "conflicted" : "failed"}: ${merge.detail}`);
+        await channel.send("master", merge.conflicted ? "BLOCKED" : "TASK_FAILED",
+          `could not merge ${branch} into the integration branch: ${merge.detail}`,
+          { taskId: task.id });
+      }
+    }
+
+    await channel.send("master", ok ? "TASK_COMPLETED" : "TASK_FAILED", result.summary, {
       taskId: task.id,
-      status: result.ok ? "review" : "failed",
+      status: ok ? "review" : "failed",
       files: result.filesChanged,
     });
 
     // Tell the team what landed, so dependants can react without asking.
-    if (result.ok) {
+    if (ok) {
       const signal = task.role === "backend" ? "API_READY"
         : task.role === "database" ? "SCHEMA_READY"
         : null;
@@ -139,7 +202,9 @@ export async function runWorkerTask(
     }
 
     return {
-      ...result, branch, pushed, merged, mergeConflict,
+      ...result,
+      ok,
+      branch, pushed, merged, mergeConflict, review, reviewRounds,
       sandboxSeconds: Math.round((Date.now() - startedAt) / 1000),
     };
   } finally {

@@ -39,6 +39,8 @@ ${C.bold("usage")}: pnpm run:agent --repo=<git-url> --goal="<what to build>"
   --concurrency=4                   max parallel workers
   --max-tasks=6                     cap the plan size
   --dry-plan                        plan only, do not run workers
+  --no-review                       skip code review (saves 1 request per task)
+  --review-rounds=1                 revision attempts after a change request
   --reuse-plan=<runId>              re-run a previous run's plan without re-planning
                                     (saves the planning request against a tight quota)
 `);
@@ -111,6 +113,8 @@ ${C.bold("usage")}: pnpm run:agent --repo=<git-url> --goal="<what to build>"
       maxTasks: arg("max-tasks") ? Number(arg("max-tasks")) : undefined,
       providerName: provider,
       planOnly: flag("dry-plan"),
+      skipReview: flag("no-review"),
+      maxReviewRounds: Number(arg("review-rounds", "1")),
     });
 
     console.log(`\n${C.bold("results")} ${C.dim(`run ${runId} in ${Math.round((Date.now() - started) / 1000)}s`)}`);
@@ -119,6 +123,17 @@ ${C.bold("usage")}: pnpm run:agent --repo=<git-url> --goal="<what to build>"
       console.log(C.dim(`       branch: ${o.branch}${o.pushed ? " (pushed)" : " (local only)"}`));
       console.log(C.dim(`       files:  ${o.filesChanged.map((f) => f.path).join(", ") || "none"}`));
       console.log(C.dim(`       ${o.summary.split("\n")[0]}`));
+      if (o.review) {
+        const approved = o.review.decision === "approve";
+        const blocking = o.review.findings.filter((f) => f.severity === "blocker" || f.severity === "major");
+        console.log(
+          `       ${approved ? C.green("reviewed: approved") : C.yellow("reviewed: changes requested")}` +
+          C.dim(`${o.reviewRounds > 1 ? ` (after ${o.reviewRounds - 1} revision)` : ""} — ${o.review.summary}`),
+        );
+        for (const f of blocking) {
+          console.log(C.dim(`         [${f.severity}] ${f.file ? f.file + ": " : ""}${f.issue}`));
+        }
+      }
     }
 
     const run = await store.getRun(runId);
