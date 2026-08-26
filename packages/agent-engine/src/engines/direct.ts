@@ -285,7 +285,9 @@ export class DirectEngine implements CodingEngine {
     const commits = await commitsSince(provider, sandboxId, cwd, baseCommit);
 
     return {
-      ok: finished && files.length > 0,
+      // Success means the agent declared the work done. Requiring a file change
+      // would fail any legitimately read-only task, such as verifying a build.
+      ok: finished,
       // Distinguishes "the agent stopped on purpose" from "we cut it off":
       // a capped run can still leave a reviewable branch.
       incomplete: !finished,

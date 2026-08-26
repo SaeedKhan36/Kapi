@@ -26,7 +26,14 @@ async function gh<T>(path: string, token: string, init: RequestInit = {}): Promi
   const body = await res.text();
   if (!res.ok) {
     let message = body.slice(0, 300);
-    try { message = JSON.parse(body).message ?? message; } catch { /* keep raw */ }
+    try {
+      const parsed = JSON.parse(body);
+      // 422s put the useful part in `errors`, not `message`.
+      const details = (parsed.errors ?? [])
+        .map((e: any) => e.message ?? `${e.resource ?? ""}.${e.field ?? ""}: ${e.code ?? ""}`)
+        .filter(Boolean).join("; ");
+      message = [parsed.message, details].filter(Boolean).join(" — ") || message;
+    } catch { /* keep raw */ }
     throw new Error(`GitHub ${res.status} on ${path}: ${message}`);
   }
   return (body ? JSON.parse(body) : {}) as T;

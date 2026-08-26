@@ -3,6 +3,17 @@ import { SandboxError } from "./types.ts";
 
 export type GitIdentity = { name: string; email: string };
 
+/** Dependency and build directories no agent should ever commit. */
+export const DEFAULT_EXCLUDES = [
+  "# Written by kapi. Agents commit with `git add -A`; these must never land.",
+  "node_modules/", "bower_components/", "vendor/",
+  "dist/", "build/", "out/", ".next/", ".nuxt/", ".output/", ".svelte-kit/",
+  "target/", "__pycache__/", "*.pyc", ".venv/", "venv/", ".tox/",
+  "coverage/", ".nyc_output/", ".turbo/", ".cache/", ".parcel-cache/",
+  "*.log", ".DS_Store", ".env", ".env.local",
+  "",
+].join("\n");
+
 /** Injects a token into an https remote without ever logging it. */
 export function authenticatedRemote(repoUrl: string, token?: string): string {
   if (!token) return repoUrl;
@@ -66,6 +77,12 @@ export async function cloneRepo(
       provider.name,
     );
   }
+
+  // Guard the repo against build artefacts BEFORE any agent touches it.
+  // Agents commit with `git add -A`; without this, one `npm install` puts
+  // thousands of node_modules files into the pull request. Written to
+  // .git/info/exclude rather than .gitignore so it never shows up in the diff.
+  await provider.writeFile(sandboxId, `${dir}/.git/info/exclude`, DEFAULT_EXCLUDES);
 
   const id = opts.identity ?? { name: "kapi-agent", email: "agent@kapi.local" };
   await provider.exec(

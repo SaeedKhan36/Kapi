@@ -22,6 +22,17 @@ export class GeminiProvider implements LLMProvider {
    * a name in the public docs may 404 for a given key - so we fall through the
    * list on NOT_FOUND and remember what worked.
    */
+  /**
+   * Per-tier candidate override, e.g. KAPI_MODELS_CODING="a,b".
+   * Lets a run be pinned to models that still have quota, instead of
+   * rediscovering exhaustion one wasted request at a time.
+   */
+  static #envCandidates(tier: ModelTier): string[] | null {
+    const raw = process.env[`KAPI_MODELS_${tier.toUpperCase()}`];
+    const list = raw?.split(",").map((m) => m.trim()).filter(Boolean) ?? [];
+    return list.length ? list : null;
+  }
+
   static MODEL_CANDIDATES: Record<ModelTier, string[]> = {
     // Pro models are deliberately absent: they carry NO free-tier quota and
     // return 429 immediately, so listing them only adds latency before the
@@ -62,8 +73,12 @@ export class GeminiProvider implements LLMProvider {
    * and models already known to be exhausted go last rather than being retried.
    */
   #candidates(tier: ModelTier): string[] {
+    const override = GeminiProvider.#envCandidates(tier);
     const configured = this.models[tier];
-    const all = [configured, ...GeminiProvider.MODEL_CANDIDATES[tier].filter((m) => m !== configured)];
+    const all = override ?? [
+      configured,
+      ...GeminiProvider.MODEL_CANDIDATES[tier].filter((m) => m !== configured),
+    ];
 
     const healthy = all.filter((m) => !this.#exhausted.has(m));
     const spent = all.filter((m) => this.#exhausted.has(m));
