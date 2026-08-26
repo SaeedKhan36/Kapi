@@ -43,20 +43,25 @@ export interface RepoAccess {
   readonly name: string;
 
   /**
-   * A credential good for git operations on exactly this repo.
+   * A credential good for git operations on exactly this repository.
+   *
+   * Takes the clone URL rather than a parsed ref because that is what the run
+   * engine actually holds, and because whether a remote must be GitHub at all
+   * is a property of the implementation: a PAT works against any git host,
+   * while the App can only speak for repositories it is installed on.
    *
    * Called per git operation rather than once per run: installation tokens
-   * expire in an hour, and a run may outlive that. Implementations cache.
+   * expire in an hour and a run may outlive that. Implementations cache.
    * Undefined means "no push access configured" - the run still completes,
    * branches just stay local to their sandbox.
    */
-  tokenFor(ref: RepoRef): Promise<string | undefined>;
+  tokenFor(repoUrl: string): Promise<string | undefined>;
 
   /**
-   * Whether work may proceed on this repo at all. Checked once, before any
-   * sandbox is created, so an unauthorized run costs nothing.
+   * Whether work may proceed on this repository at all. Checked once, before
+   * any sandbox is created, so an unauthorized run costs nothing.
    */
-  authorize(ref: RepoRef): Promise<AuthorizationResult>;
+  authorize(repoUrl: string): Promise<AuthorizationResult>;
 
   /** Commit author for work produced by this run. */
   identity(): Promise<GitIdentity>;

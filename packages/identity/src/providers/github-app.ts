@@ -1,7 +1,7 @@
 import { canPush, githubUserIdentity } from "../github-api.ts";
 import { GitHubApp, GitHubAppError, type GitHubAppConfig } from "../github-app.ts";
 import type { AuthorizationResult, GitIdentity, RepoAccess, RepoRef } from "../types.ts";
-import { repoFullName } from "../types.ts";
+import { parseRepoUrl, repoFullName } from "../types.ts";
 
 export type GitHubAppUser = {
   /** The user's live GitHub OAuth token, resolved per run by the caller. */
@@ -36,7 +36,9 @@ export class GitHubAppRepoAccess implements RepoAccess {
     return this.user.oauthToken;
   }
 
-  async tokenFor(ref: RepoRef): Promise<string | undefined> {
+  async tokenFor(repoUrl: string): Promise<string | undefined> {
+    const ref = parseRepoUrl(repoUrl);
+    if (!ref) throw new GitHubAppError(`${repoUrl} is not a GitHub repository`);
     return this.#app.tokenFor(ref);
   }
 
@@ -46,7 +48,16 @@ export class GitHubAppRepoAccess implements RepoAccess {
     return { name, email };
   }
 
-  async authorize(ref: RepoRef): Promise<AuthorizationResult> {
+  async authorize(repoUrl: string): Promise<AuthorizationResult> {
+    const ref = parseRepoUrl(repoUrl);
+    if (!ref) {
+      return {
+        ok: false,
+        action: "denied",
+        reason: `${repoUrl} is not a GitHub repository, and the Kapi GitHub App can only reach GitHub.`,
+      };
+    }
+
     // The user's own rights first: it is the cheaper check, and a user who
     // cannot push should get "you cannot push here" rather than an invitation
     // to install an App on someone else's repository.

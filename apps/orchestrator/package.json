@@ -11,6 +11,7 @@
     "@kapi/bus": "workspace:*",
     "@kapi/db": "workspace:*",
     "@kapi/env": "workspace:*",
+    "@kapi/identity": "workspace:*",
     "@kapi/llm": "workspace:*",
     "@kapi/protocol": "workspace:*",
     "@kapi/sandbox": "workspace:*",

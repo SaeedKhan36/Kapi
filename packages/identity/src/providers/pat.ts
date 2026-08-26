@@ -1,4 +1,4 @@
-import type { AuthorizationResult, GitIdentity, RepoAccess, RepoRef } from "../types.ts";
+import type { AuthorizationResult, GitIdentity, RepoAccess } from "../types.ts";
 
 /**
  * The single-operator path: one personal access token, whatever it can reach.
@@ -20,7 +20,8 @@ export class PatRepoAccess implements RepoAccess {
     },
   ) {}
 
-  async tokenFor(_ref: RepoRef): Promise<string | undefined> {
+  /** The same token for every remote - that is exactly what makes a PAT risky. */
+  async tokenFor(_repoUrl: string): Promise<string | undefined> {
     return this.token || undefined;
   }
 
@@ -29,11 +30,15 @@ export class PatRepoAccess implements RepoAccess {
   }
 
   /**
-   * Always allowed. A missing token is not an authorization failure - a run
-   * without one still plans, still works, and simply leaves its branches in
-   * the sandbox, which is documented behaviour rather than an error.
+   * Always allowed, and not restricted to GitHub: a PAT works against any git
+   * remote, and there is no second party whose consent could be checked - the
+   * person holding the token is the person running the command.
+   *
+   * A missing token is not an authorization failure either. A run without one
+   * still plans and still works; its branches simply stay in the sandbox,
+   * which is documented behaviour rather than an error.
    */
-  async authorize(_ref: RepoRef): Promise<AuthorizationResult> {
+  async authorize(_repoUrl: string): Promise<AuthorizationResult> {
     return { ok: true };
   }
 

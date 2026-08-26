@@ -54,6 +54,9 @@ importers:
       '@kapi/env':
         specifier: workspace:*
         version: link:../../packages/env
+      '@kapi/identity':
+        specifier: workspace:*
+        version: link:../../packages/identity
       '@kapi/llm':
         specifier: workspace:*
         version: link:../../packages/llm

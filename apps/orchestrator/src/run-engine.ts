@@ -9,7 +9,10 @@ import {
   cloneRepo, createRemoteBranch, createSandboxProvider, integrationBranch, isEmptyRepo,
   mergeIntoIntegration, seedEmptyRepo, taskBranch, type ProviderName, type SandboxProvider,
 } from "@kapi/sandbox";
-import { openPullRequest, parseRepoUrl } from "./github.ts";
+import {
+  createRepoAccess, openPullRequest, parseRepoUrl,
+  type AuthorizationAction, type RepoAccess,
+} from "@kapi/identity";
 import { renderContract } from "./contract.ts";
 import { runReview } from "./review-runner.ts";
 import { runWorkerTask, type WorkerOutcome } from "./worker-runner.ts";
@@ -52,9 +55,33 @@ export type RunEngineDeps = {
   createLlm?: (onUsage: (u: { requests: number; totalTokens: number }) => void) => RoutedLLM;
   createEngine?: (llm: RoutedLLM) => CodingEngine;
   createProvider?: (name?: ProviderName) => SandboxProvider;
+  /**
+   * How this run reaches GitHub. Defaults to the PAT in the environment, which
+   * is what the CLI and a single-operator deployment use. An HTTP caller passes
+   * a GitHub App-backed one instead, so each sandbox only ever receives a token
+   * scoped to the single repository it is working on.
+   */
+  repoAccess?: RepoAccess;
   /** Bypasses the LLM planner with a fixed graph. Used by scheduler tests. */
   planOverride?: (req: RunRequest) => Promise<TaskGraph>;
 };
+
+/**
+ * The run was refused, rather than attempted and failed.
+ *
+ * Distinct from a generic error so the HTTP layer can answer 403 with a link
+ * the user can act on instead of 500 with a stack trace.
+ */
+export class RunNotAuthorizedError extends Error {
+  constructor(
+    message: string,
+    readonly action?: AuthorizationAction,
+    readonly installUrl?: string,
+  ) {
+    super(message);
+    this.name = "RunNotAuthorizedError";
+  }
+}
 
 export class RunEngine {
   constructor(
@@ -76,11 +103,39 @@ export class RunEngine {
     return next;
   }
 
-  #identity() {
-    return {
-      name: process.env.GIT_AUTHOR_NAME ?? "kapi-agent",
-      email: process.env.GIT_AUTHOR_EMAIL ?? "agent@kapi.local",
-    };
+  #access(): RepoAccess {
+    this.#repoAccess ??= this.opts.repoAccess ?? createRepoAccess();
+    return this.#repoAccess;
+  }
+  #repoAccess: RepoAccess | undefined;
+
+  /**
+   * The credential for one repository, minted fresh at each git operation.
+   *
+   * Not resolved once per run on purpose: a GitHub App installation token
+   * lasts an hour and a run can outlive that, so caching one for the duration
+   * would fail late, mid-push, with nothing committed anywhere useful.
+   */
+  #tokenFor(repoUrl: string): Promise<string | undefined> {
+    return this.#access().tokenFor(repoUrl);
+  }
+
+  /**
+   * Refuses a run the caller is not entitled to make, before it costs anything.
+   *
+   * The message carries the remedy where there is one - installing the app on
+   * the repository is a normal next step, not a failure the user can do
+   * nothing about.
+   */
+  async #authorize(repoUrl: string): Promise<void> {
+    const decision = await this.#access().authorize(repoUrl);
+    if (decision.ok) return;
+
+    throw new RunNotAuthorizedError(
+      decision.installUrl ? `${decision.reason} ${decision.installUrl}` : decision.reason,
+      decision.action,
+      decision.installUrl,
+    );
   }
 
   /**
@@ -119,6 +174,11 @@ export class RunEngine {
       if (!this.opts.planOverride && !llm.isAvailable()) {
         throw new Error("no LLM provider configured - set GEMINI_API_KEY (free at aistudio.google.com/apikey)");
       }
+
+      // Before anything is spent. A sandbox costs money per second and an LLM
+      // call costs a twentieth of the daily free quota, so an unauthorized run
+      // should fail here rather than after planning.
+      await this.#authorize(req.repoUrl);
 
       const graph = this.opts.planOverride
         ? await this.#usePlanOverride(runId, req, master, provider, baseBranch, idleTtlSeconds)
@@ -189,7 +249,9 @@ export class RunEngine {
     runId: string, req: RunRequest, graph: TaskGraph,
     outcomes: Map<string, WorkerOutcome>, baseBranch: string,
   ) {
-    const token = process.env.GITHUB_TOKEN;
+    // The human's credential, not the sandbox one: a pull request should be
+    // attributed to the person who asked for the run, not to a bot installation.
+    const token = await this.#access().apiToken();
     const ref = parseRepoUrl(req.repoUrl);
     if (!token || !ref) return;
 
@@ -270,8 +332,8 @@ export class RunEngine {
     await cloneRepo(provider, sandboxId, {
       repoUrl: req.repoUrl,
       branch: baseBranch,
-      token: process.env.GITHUB_TOKEN,
-      identity: this.#identity(),
+      token: await this.#tokenFor(req.repoUrl),
+      identity: await this.#access().identity(),
       dir: "repo",
       depth: 50,
     });
@@ -279,25 +341,28 @@ export class RunEngine {
     // A brand-new GitHub repo has no commits, so there is no HEAD to diff
     // against and no base for a PR. Give it a root commit first.
     if (await isEmptyRepo(provider, sandboxId, "repo")) {
-      if (!process.env.GITHUB_TOKEN) {
-        throw new Error(`${req.repoUrl} is empty and GITHUB_TOKEN is not set, so it cannot be initialised`);
+      const token = await this.#tokenFor(req.repoUrl);
+      if (!token) {
+        throw new Error(
+          `${req.repoUrl} is empty and there is no push credential for it, so it cannot be initialised`,
+        );
       }
       this.#emit({ kind: "status", runId, status: "preparing", detail: "repository is empty - creating base branch" });
       await seedEmptyRepo(provider, sandboxId, {
         branch: baseBranch,
-        token: process.env.GITHUB_TOKEN,
+        token,
         dir: "repo",
         readmeTitle: req.repoUrl.split("/").pop()?.replace(/\.git$/, "") ?? "Project",
       });
     }
 
-    if (process.env.GITHUB_TOKEN) {
+    if (await this.#tokenFor(req.repoUrl)) {
       // Every worker branches from here, and finished work merges back into it,
       // so a dependant actually inherits what it was waiting on.
       await createRemoteBranch(provider, sandboxId, {
         branch: integrationBranch(runId),
         from: baseBranch,
-        token: process.env.GITHUB_TOKEN,
+        token: await this.#tokenFor(req.repoUrl),
         dir: "repo",
       });
     }
@@ -359,6 +424,12 @@ export class RunEngine {
     const contract = renderContract(graph.contract);
     const byId = new Map(graph.tasks.map((t) => [t.id, t]));
 
+    // Whether pushing is possible at all decides the shape of the run - there
+    // is no integration branch to merge into without it. The tokens themselves
+    // are still minted per operation, since one may expire mid-run.
+    const identity = await this.#access().identity();
+    const canPush = Boolean(await this.#tokenFor(req.repoUrl));
+
     const succeeded = new Set<string>();
     const failed = new Set<string>();
     const started = new Set<string>();
@@ -398,8 +469,10 @@ export class RunEngine {
           const outcome = await runWorkerTask(
             {
               runId, repoUrl: req.repoUrl, baseBranch: cfg.baseBranch,
-              githubToken: process.env.GITHUB_TOKEN, provider, engine, contract,
-              identity: this.#identity(),
+              // Minted per worker rather than once per run: an installation
+              // token lasts an hour, and a wide graph can run longer than that.
+              githubToken: await this.#tokenFor(req.repoUrl),
+              provider, engine, contract, identity,
               idleTtlSeconds: cfg.idleTtlSeconds,
               maxReviewRounds: req.maxReviewRounds ?? 1,
               review: req.skipReview
@@ -413,7 +486,7 @@ export class RunEngine {
                       task: reviewed,
                       contract,
                       workerSummary: summary,
-                      githubToken: process.env.GITHUB_TOKEN,
+                      githubToken: await this.#tokenFor(req.repoUrl),
                       idleTtlSeconds: cfg.idleTtlSeconds,
                     });
                     await this.store.saveArtifact(runId, "review", verdict, reviewed.id);
@@ -423,13 +496,13 @@ export class RunEngine {
                     });
                     return verdict;
                   },
-              mergeBack: process.env.GITHUB_TOKEN
+              mergeBack: canPush
                 ? ({ sandboxId, branch }) =>
-                    this.#withMergeLock(() =>
+                    this.#withMergeLock(async () =>
                       mergeIntoIntegration(provider, sandboxId, {
                         integration: integrationBranch(runId),
                         branch,
-                        token: process.env.GITHUB_TOKEN,
+                        token: await this.#tokenFor(req.repoUrl),
                         dir: "repo",
                       }),
                     )
