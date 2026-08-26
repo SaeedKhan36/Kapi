@@ -18,7 +18,10 @@ export class DaytonaProvider implements SandboxProvider {
   #client: any = null;
   #boxes = new Map<string, { handle: any; box: Sandbox }>();
 
-  constructor(private apiKey = process.env.DAYTONA_API_KEY) {}
+  constructor(
+    private apiKey = process.env.DAYTONA_API_KEY,
+    private apiUrl = process.env.DAYTONA_API_URL,
+  ) {}
 
   async isAvailable() {
     if (!this.apiKey) return false;
@@ -44,28 +47,42 @@ export class DaytonaProvider implements SandboxProvider {
       );
     }
     const Daytona = mod.Daytona ?? mod.default?.Daytona;
-    this.#client = new Daytona({ apiKey: this.apiKey });
+    this.#client = new Daytona({
+      apiKey: this.apiKey,
+      ...(this.apiUrl ? { apiUrl: this.apiUrl } : {}),
+    });
     return this.#client;
   }
 
   async create(spec: SandboxSpec): Promise<Sandbox> {
     const daytona = await this.#sdk();
     try {
+      // Daytona rejects explicit resources when the sandbox comes from a
+      // snapshot (the default path), so only send them alongside a custom image.
+      const resources = spec.image
+        ? { resources: { cpu: spec.cpus ?? 1, memory: Math.round((spec.memoryMb ?? 2048) / 1024) } }
+        : {};
+
       const handle = await daytona.create({
         language: "typescript",
-        image: spec.image,
+        ...(spec.image ? { image: spec.image } : {}),
         envVars: spec.env,
         autoStopInterval: Math.max(1, Math.round((spec.idleTtlSeconds ?? 900) / 60)),
-        resources: {
-          cpu: spec.cpus ?? 1,
-          memory: Math.round((spec.memoryMb ?? 2048) / 1024),
-        },
+        ...resources,
       });
       const id = handle.id ?? handle.sandboxId;
       const workdir = spec.workdir ?? "/home/daytona/workspace";
+
+      // Create the workdir BEFORE registering the sandbox: exec() resolves a
+      // missing cwd against the workdir, so bootstrapping it through exec would
+      // ask the runner to chdir into the very directory it is creating.
+      const made = await handle.process.executeCommand(`mkdir -p ${workdir}`);
+      if ((made.exitCode ?? 0) !== 0) {
+        throw new SandboxError(`could not create workdir ${workdir}: ${made.result ?? ""}`, this.name);
+      }
+
       const box: Sandbox = { id, provider: this.name, workdir, createdAt: Date.now() };
       this.#boxes.set(id, { handle, box });
-      await this.exec(id, `mkdir -p ${workdir}`);
       return box;
     } catch (cause) {
       throw new SandboxError(`failed to create sandbox: ${String(cause)}`, this.name, cause);
@@ -78,23 +95,33 @@ export class DaytonaProvider implements SandboxProvider {
     return entry;
   }
 
+  /** Resolves a possibly-relative cwd against the sandbox workdir. */
+  #resolveCwd(box: Sandbox, cwd?: string): string {
+    if (!cwd) return box.workdir;
+    return cwd.startsWith("/") ? cwd : `${box.workdir}/${cwd}`;
+  }
+
   async exec(id: string, cmd: string, opts: ExecOptions = {}): Promise<ExecResult> {
     const { handle, box } = this.#handle(id);
     const started = Date.now();
-    const cwd = opts.cwd ?? box.workdir;
-    const envPrefix = Object.entries(opts.env ?? {})
-      .map(([k, v]) => `export ${k}=${JSON.stringify(v)};`)
-      .join(" ");
+    // Daytona requires an ABSOLUTE cwd; a relative one fails with a confusing
+    // shell error rather than a path error.
+    const cwd = this.#resolveCwd(box, opts.cwd);
+
     const res = await handle.process.executeCommand(
-      `${envPrefix} cd ${cwd} && ${cmd}`,
+      cmd,
       cwd,
-      undefined,
+      opts.env,
       opts.timeoutMs ? Math.ceil(opts.timeoutMs / 1000) : undefined,
     );
+
+    const output = res.result ?? res.stdout ?? "";
     return {
       exitCode: res.exitCode ?? 0,
-      stdout: res.result ?? res.stdout ?? "",
-      stderr: res.stderr ?? "",
+      // Daytona merges streams into `result`; attribute it to stdout on success
+      // and stderr on failure so callers reading either still see the message.
+      stdout: output,
+      stderr: (res.exitCode ?? 0) === 0 ? (res.stderr ?? "") : output,
       durationMs: Date.now() - started,
     };
   }
@@ -108,7 +135,7 @@ export class DaytonaProvider implements SandboxProvider {
 
   async writeFile(id: string, path: string, content: string) {
     const { handle, box } = this.#handle(id);
-    const abs = path.startsWith("/") ? path : `${box.workdir}/${path}`;
+    const abs = this.#resolveCwd(box, path);
     const buf = Buffer.from(content, "utf8");
     if (handle.fs?.uploadFile) await handle.fs.uploadFile(buf, abs);
     else await this.exec(id, `mkdir -p "$(dirname ${abs})" && cat > ${abs} <<'KAPI_EOF'\n${content}\nKAPI_EOF`);
@@ -116,7 +143,7 @@ export class DaytonaProvider implements SandboxProvider {
 
   async readFile(id: string, path: string) {
     const { handle, box } = this.#handle(id);
-    const abs = path.startsWith("/") ? path : `${box.workdir}/${path}`;
+    const abs = this.#resolveCwd(box, path);
     if (handle.fs?.downloadFile) {
       const buf = await handle.fs.downloadFile(abs);
       return Buffer.from(buf).toString("utf8");

@@ -40,14 +40,26 @@ export async function cloneRepo(
 ) {
   const dir = opts.dir ?? ".";
   const remote = authenticatedRemote(opts.repoUrl, opts.token);
+  // A freshly created repo has no branches at all, so --branch would fail.
+  // Clone bare of that flag and check the branch out afterwards if it exists.
   const branchArg = opts.branch ? `--branch ${shellQuote(opts.branch)}` : "";
   const depthArg = opts.depth === 0 ? "" : `--depth ${opts.depth ?? 50}`;
 
-  const res = await provider.exec(
+  let res = await provider.exec(
     sandboxId,
     `git clone ${depthArg} ${branchArg} ${shellQuote(remote)} ${shellQuote(dir)} 2>&1`,
     { timeoutMs: 180_000 },
   );
+
+  // Retry without --branch: an empty repo has no branch to ask for.
+  if (res.exitCode !== 0 && branchArg) {
+    res = await provider.exec(
+      sandboxId,
+      `rm -rf ${shellQuote(dir)} && git clone ${depthArg} ${shellQuote(remote)} ${shellQuote(dir)} 2>&1`,
+      { timeoutMs: 180_000 },
+    );
+  }
+
   if (res.exitCode !== 0) {
     throw new SandboxError(
       `git clone failed: ${redact(res.stdout + res.stderr, opts.token)}`,
@@ -67,6 +79,55 @@ export async function cloneRepo(
     ].join(" && "),
     { cwd: dir === "." ? undefined : dir },
   );
+}
+
+/** True when the clone has no commits yet (a freshly created GitHub repo). */
+export async function isEmptyRepo(
+  provider: SandboxProvider, sandboxId: string, dir = "repo",
+): Promise<boolean> {
+  const res = await provider.exec(sandboxId, "git rev-parse --verify HEAD", { cwd: dir });
+  return res.exitCode !== 0;
+}
+
+/**
+ * Gives an empty repository a root commit on `branch` and pushes it.
+ *
+ * Without this, nothing downstream works: there is no HEAD to diff against, no
+ * branch to cut from, and no base for a pull request to target. Only ever
+ * called when the repo genuinely has zero commits, so it cannot clobber
+ * existing history.
+ */
+export async function seedEmptyRepo(
+  provider: SandboxProvider,
+  sandboxId: string,
+  opts: { branch: string; token?: string; dir?: string; readmeTitle?: string },
+): Promise<void> {
+  const dir = opts.dir ?? "repo";
+  const title = opts.readmeTitle ?? "Project";
+
+  await provider.writeFile(
+    sandboxId,
+    `${dir}/README.md`,
+    `# ${title}\n\nInitialised by kapi so agents have a base branch to work from.\n`,
+  );
+
+  const res = await provider.exec(
+    sandboxId,
+    [
+      `git checkout -b ${shellQuote(opts.branch)} 2>/dev/null || git checkout ${shellQuote(opts.branch)}`,
+      "git add -A",
+      `git commit -m ${shellQuote("Initialise repository")}`,
+      `git push -u origin ${shellQuote(opts.branch)} 2>&1`,
+    ].join(" && "),
+    { cwd: dir, timeoutMs: 120_000 },
+  );
+
+  if (res.exitCode !== 0) {
+    throw new SandboxError(
+      `failed to seed empty repo: ${redact(res.stdout + res.stderr, opts.token)}`,
+      provider.name,
+    );
+  }
 }
 
 export function shellQuote(value: string): string {

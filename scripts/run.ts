@@ -105,6 +105,7 @@ ${C.bold("usage")}: pnpm run:agent --repo=<git-url> --goal="<what to build>"
     }
 
     const run = await store.getRun(runId);
+    if (run?.prUrl) console.log(`\n${C.bold("pull request")} ${C.cyan(run.prUrl)}`);
     console.log(`\n${C.dim(`llm: ${run?.llmRequests} requests, ${run?.llmTokens} tokens`)}`);
     const failed = [...outcomes.values()].filter((o) => !o.ok).length;
     console.log(failed === 0 ? C.green("\nrun complete\n") : C.yellow(`\nrun complete with ${failed} failure(s)\n`));

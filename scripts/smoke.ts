@@ -11,6 +11,9 @@ import { createLLM } from "../packages/llm/src/index.ts";
 import { createDb, describeDbTarget } from "../packages/db/src/index.ts";
 
 const arg = process.argv.find((a) => a.startsWith("--provider="))?.split("=")[1];
+// Free-tier quota is per model per day, so make it easy to exercise the
+// sandbox and database paths without spending any of it.
+const skipLlm = process.argv.includes("--skip-llm");
 const REPO = process.env.SMOKE_REPO ?? "https://github.com/octocat/Hello-World.git";
 
 let pass = 0;
@@ -133,7 +136,9 @@ const main = async () => {
 
   console.log("\n\x1b[1m llm\x1b[0m");
   const llm = createLLM();
-  if (!llm.isAvailable()) {
+  if (skipLlm) {
+    console.log("  \x1b[33mskip\x1b[0m  --skip-llm set (preserving daily quota)");
+  } else if (!llm.isAvailable()) {
     console.log("  \x1b[33mskip\x1b[0m  no LLM key set - add GEMINI_API_KEY to .env (free, no card)");
   } else {
     console.log(`  chain: \x1b[36m${llm.available.map((p) => p.name).join(" -> ")}\x1b[0m`);
