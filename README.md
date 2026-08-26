@@ -56,6 +56,7 @@ back to embedded PGlite in `.kapi/db` and creates its tables on first run.
 | `GITHUB_TOKEN` | fine-grained PAT, `contents:write` | only to push worker branches |
 | `DAYTONA_API_KEY` | [daytona.io](https://daytona.io) — $200 trial credit | only for cloud sandboxes |
 | `DATABASE_URL` | [neon.tech](https://neon.tech) | no — falls back to embedded PGlite |
+| `WORKOS_*`, `GITHUB_APP_*` | [workos.com](https://workos.com) — free to 1M MAU | only to run kapi for more than one person |
 
 `GROQ_API_KEY` and `CEREBRAS_API_KEY` are optional failover for when Gemini's
 daily quota runs out. Without `GITHUB_TOKEN` a run still completes — worker
@@ -100,6 +101,7 @@ Interfaces with more than one implementation, so no vendor is load-bearing:
 | `packages/llm` | `LLMProvider` | Gemini, Groq, Cerebras (auto-failover) |
 | `packages/agent-engine` | `CodingEngine` | `direct` (built-in), `aider` |
 | `packages/bus` | `MessageBus` | in-process, Redis |
+| `packages/identity` | `RepoAccess` | PAT, GitHub App |
 | `packages/db` | Drizzle schema | PGlite, Postgres/Neon |
 
 > **PGlite is single-writer.** `DATABASE_URL` unset means an embedded database in
@@ -111,6 +113,45 @@ The rest are plumbing: `packages/protocol` (zod wire types — messages, task
 graph, shared contract), `packages/agent-runtime` (master planner and repo
 context), `packages/env` (dependency-free `.env` loader that never clobbers real
 deployment config).
+
+### Who a run belongs to
+
+kapi runs two ways, and the difference is entirely in `RepoAccess`.
+
+**One operator.** Set `GITHUB_TOKEN` and nothing else. There is no login, no
+database of users, and every run uses that one PAT. This is the quick start
+above, and what the CLI does.
+
+**Many people.** Set `WORKOS_CLIENT_ID` / `WORKOS_API_KEY` and a GitHub App
+(`GITHUB_APP_ID` / `GITHUB_APP_PRIVATE_KEY`) and the chain becomes:
+
+```
+WorkOS AuthKit  → who is asking
+WorkOS Pipes    → their GitHub token, held and refreshed by WorkOS,
+                  used to list repos and check they could push themselves
+GitHub App      → the repo owner installed kapi here
+                  → a token for that one repository, contents-only, 1 hour
+                     → the only credential a sandbox ever sees
+```
+
+Both parties have to agree: the user must have push rights, *and* the owner
+must have installed the app. Either alone is refused before a sandbox is
+created, with a link to fix it. kapi stores no GitHub token at any point — the
+user's grant lives in WorkOS, and installation tokens are minted per operation.
+
+`KAPI_AUTH_MODE` (`workos` | `none`) forces the choice; by default it follows
+whether WorkOS is configured.
+
+### Credentials never persist in a sandbox
+
+The coding engine runs model-chosen shell commands against repository contents,
+so anything readable from inside a sandbox is readable by a prompt injection
+carried in the repo being worked on. Tokens therefore never reach the
+environment and never reach `.git/config`. `withGitAuth` writes one to a `0600`
+file in a `0700` directory, points `GIT_ASKPASS` at it for the duration of a
+single git command, and deletes it. `pnpm test:unit` asserts this against a real
+sandbox — token absent from the filesystem, absent from the environment, auth
+directory gone.
 
 ### The review loop
 
@@ -153,16 +194,30 @@ to, and it is a plain HTTP + WebSocket surface you can drive yourself.
 
 | Route | Does |
 |---|---|
-| `GET /api/health` | db target, sandbox provider, whether an LLM key and `GITHUB_TOKEN` are configured |
-| `GET /api/runs` | every run |
+| `GET /api/health` | db target, sandbox provider, auth mode, whether an LLM key and a push credential are configured — **public** |
+| `GET /api/me` | the caller, and whether their GitHub is connected |
+| `GET /api/github/connect` | 302 into the WorkOS GitHub authorization flow |
+| `GET /api/github/repos` | repositories the caller can see |
+| `GET /api/github/repos/:owner/:repo/branches` | its branches |
+| `GET /api/github/repos/:owner/:repo/authorization` | whether a run here would be allowed, and how to fix it if not |
+| `GET /api/runs` | the caller's runs |
 | `GET /api/runs/:id` | one run with its tasks, agents, messages, artifacts |
 | `POST /api/runs` | start a run — `{ goal, repoUrl, baseBranch?, maxConcurrency?, maxTasks?, providerName? }` |
-| `WS /ws?runId=…` | live `status` / `plan` / `task` / `message` events |
+| `WS /ws?runId=…&token=…` | live `status` / `plan` / `task` / `message` events |
+
+Everything but `/api/health` needs `Authorization: Bearer <WorkOS access
+token>` when `KAPI_AUTH_MODE=workos`; in `none` mode there is one implicit
+local user and the header is ignored. The websocket authenticates during the
+HTTP upgrade — a bad token gets a plain `401`, not an opened-then-closed
+socket — and takes its token in the query string because browsers cannot set
+headers on a WebSocket.
 
 `POST /api/runs` returns `202 { runId }` as soon as the run row exists rather
 than holding the request open for the minutes a run takes; follow the rest over
-the websocket. Connecting mid-run replays recent events, and omitting `runId`
-subscribes to everything.
+the websocket. It answers `403` with `{ code, action, installUrl }` when the
+repository has not been authorized, so a caller can send the user somewhere
+useful. Connecting mid-run replays recent events, and omitting `runId`
+subscribes to all of the caller's runs.
 
 ## CLI
 

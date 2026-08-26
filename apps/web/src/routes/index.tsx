@@ -1,7 +1,8 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { api } from "~/lib/api.ts";
+import { api, ApiError, type Health, type Me } from "~/lib/api.ts";
 import type { Run } from "~/lib/types.ts";
+import { RepoPicker, type RepoSelection } from "~/components/RepoPicker.tsx";
 import { Badge, Button, Card, Input, Spinner, Textarea } from "~/components/ui.tsx";
 
 export const Route = createFileRoute("/")({ component: Home });
@@ -9,17 +10,19 @@ export const Route = createFileRoute("/")({ component: Home });
 function Home() {
   const navigate = useNavigate();
   const [goal, setGoal] = useState("");
-  const [repoUrl, setRepoUrl] = useState("");
+  const [repo, setRepo] = useState<RepoSelection>({ repoUrl: "", baseBranch: "main" });
   const [maxTasks, setMaxTasks] = useState(4);
   const [concurrency, setConcurrency] = useState(3);
   const [runs, setRuns] = useState<Run[]>([]);
-  const [health, setHealth] = useState<Awaited<ReturnType<typeof api.health>> | null>(null);
+  const [health, setHealth] = useState<Health | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ApiError | Error | null>(null);
 
   useEffect(() => {
     api.listRuns().then(setRuns).catch(() => {});
     api.health().then(setHealth).catch(() => setHealth(null));
+    api.me().then(setMe).catch(() => setMe(null));
   }, []);
 
   const submit = async (e: React.FormEvent) => {
@@ -27,10 +30,16 @@ function Home() {
     setBusy(true);
     setError(null);
     try {
-      const { runId } = await api.createRun({ goal, repoUrl, maxTasks, maxConcurrency: concurrency });
+      const { runId } = await api.createRun({
+        goal,
+        repoUrl: repo.repoUrl,
+        baseBranch: repo.baseBranch,
+        maxTasks,
+        maxConcurrency: concurrency,
+      });
       navigate({ to: "/runs/$runId", params: { runId } });
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err instanceof Error ? err : new Error(String(err)));
     } finally {
       setBusy(false);
     }
@@ -47,12 +56,11 @@ function Home() {
 
         <Card className="mt-6 p-5">
           <form onSubmit={submit} className="space-y-4">
-            <Field label="Repository" hint="https git URL the agents will clone">
-              <Input
-                required
-                placeholder="https://github.com/you/your-repo.git"
-                value={repoUrl}
-                onChange={(e) => setRepoUrl(e.target.value)}
+            <Field label="Repository" hint="the agents clone this and branch from it">
+              <RepoPicker
+                value={repo}
+                onChange={setRepo}
+                connectUrl={me?.github.connectUrl}
               />
             </Field>
 
@@ -78,10 +86,24 @@ function Home() {
             </div>
 
             {error && (
-              <p className="rounded-lg border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">{error}</p>
+              <div className="rounded-lg border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">
+                <p>{error.message}</p>
+                {/* A refused run usually has a remedy; show it rather than
+                    leaving the user with a 403 and nowhere to go. */}
+                {error instanceof ApiError && error.installUrl && (
+                  <a
+                    href={error.installUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-block text-xs font-medium underline"
+                  >
+                    Install the kapi app on this repository →
+                  </a>
+                )}
+              </div>
             )}
 
-            <Button type="submit" disabled={busy || !goal || !repoUrl} className="w-full">
+            <Button type="submit" disabled={busy || !goal || !repo.repoUrl} className="w-full">
               {busy ? <><Spinner /> starting…</> : "Start run"}
             </Button>
           </form>

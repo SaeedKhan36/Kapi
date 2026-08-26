@@ -84,6 +84,9 @@ importers:
       '@tanstack/react-start':
         specifier: ^1.168.49
         version: 1.168.49(esbuild@0.28.2)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(rolldown@1.2.5)(vite@8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0))
+      '@workos-inc/authkit-react':
+        specifier: ^0.16.2
+        version: 0.16.2(react@19.2.8)
       react:
         specifier: ^19.2.8
         version: 19.2.8
@@ -1467,6 +1470,14 @@ packages:
         optional: true
       oxc-transform-react:
         optional: true
+
+  '@workos-inc/authkit-js@0.20.2':
+    resolution: {integrity: sha512-EEo8VitBko7ON5shVRS4AMmgezWhWfxKKtGV7QpJMgsejKBXi0DujCFf7blR7z46z3xr3Ge55yVEMSrOMtMOzg==}
+
+  '@workos-inc/authkit-react@0.16.2':
+    resolution: {integrity: sha512-Q10bTJ3sd8zfbIlxl8KavLeHLuW7v2aJLfq+syyWsVa9VzbrBVFyr7HNxt3aAVJq1kcMfTJu1p9gSJT3Gswulg==}
+    peerDependencies:
+      react: '>=17'
 
   agent-base@6.0.2:
     resolution: {integrity: sha512-RZNwNclF7+MS/8bDg70amg32dyeZGZxiDuQmZxKLAlQjr3jGyLx+4Kkk58UO7D2QdgFIQCovuSuZESne6RG6XQ==}
@@ -3801,6 +3812,13 @@ snapshots:
     dependencies:
       '@rolldown/pluginutils': 1.0.1
       vite: 8.2.2(@types/node@22.20.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0)
+
+  '@workos-inc/authkit-js@0.20.2': {}
+
+  '@workos-inc/authkit-react@0.16.2(react@19.2.8)':
+    dependencies:
+      '@workos-inc/authkit-js': 0.20.2
+      react: 19.2.8
 
   agent-base@6.0.2:
     dependencies:
