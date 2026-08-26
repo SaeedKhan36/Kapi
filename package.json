@@ -9,12 +9,17 @@
   },
   "scripts": {
     "smoke": "tsx scripts/smoke.ts",
+    "build": "tsx scripts/build.ts && pnpm --filter @kapi/web build",
+    "build:api": "tsx scripts/build.ts",
+    "start": "node dist/orchestrator.mjs",
     "orchestrator": "tsx watch apps/orchestrator/src/index.ts",
     "typecheck": "tsc --noEmit",
-    "db:push": "drizzle-kit push --config=packages/db/drizzle.config.ts",
-    "db:studio": "drizzle-kit studio --config=packages/db/drizzle.config.ts",
+    "db:generate": "drizzle-kit generate --config=packages/db/drizzle.config.js",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:push": "drizzle-kit push --config=packages/db/drizzle.config.js",
+    "db:studio": "drizzle-kit studio --config=packages/db/drizzle.config.js",
     "run:agent": "tsx scripts/run.ts",
-    "test:unit": "tsx scripts/test-graph.ts && tsx scripts/test-bus.ts && tsx scripts/test-scheduler.ts && tsx scripts/test-rotation.ts && tsx scripts/test-engine.ts && tsx scripts/test-git-hygiene.ts && tsx scripts/test-git-auth.ts && tsx scripts/test-sandbox-env.ts && tsx scripts/test-repo-access.ts && tsx scripts/test-auth.ts && tsx scripts/test-integration-branch.ts && tsx scripts/test-review.ts && tsx scripts/test-redistribution.ts",
+    "test:unit": "tsx scripts/test-migrations.ts && tsx scripts/test-graph.ts && tsx scripts/test-bus.ts && tsx scripts/test-scheduler.ts && tsx scripts/test-rotation.ts && tsx scripts/test-engine.ts && tsx scripts/test-git-hygiene.ts && tsx scripts/test-git-auth.ts && tsx scripts/test-sandbox-env.ts && tsx scripts/test-repo-access.ts && tsx scripts/test-auth.ts && tsx scripts/test-integration-branch.ts && tsx scripts/test-review.ts && tsx scripts/test-redistribution.ts",
     "dev:api": "tsx watch apps/orchestrator/src/index.ts",
     "dev:web": "pnpm --filter @kapi/web dev",
     "dev": "pnpm dev:api & pnpm dev:web"
@@ -22,6 +27,7 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "drizzle-kit": "^0.30.1",
+    "esbuild": "^0.28.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "zod": "^3.25.76"

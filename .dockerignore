@@ -1,0 +1,30 @@
+# The build happens inside the image; everything below is either rebuilt there,
+# irrelevant to it, or must never enter it.
+
+# Rebuilt in the builder stage.
+node_modules
+**/node_modules
+dist
+**/dist
+apps/web/.output
+apps/web/src/routeTree.gen.ts
+
+# Secrets. .env is gitignored, but a stray copy must not be layered into an
+# image either - anyone who can pull the image can read every layer.
+.env
+.env.*
+!.env.example
+
+# Local state.
+.kapi
+.git
+.claude
+*.log
+
+# Development-only.
+.github
+.vscode
+.idea
+.DS_Store
+README.md
+LICENSE

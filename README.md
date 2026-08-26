@@ -307,11 +307,56 @@ pnpm typecheck
 ```bash
 pnpm dev:api        # orchestrator only, watch mode
 pnpm dev:web        # dashboard only (expects the API on :8787)
-pnpm db:push        # push the Drizzle schema — real Postgres only; PGlite self-creates
 pnpm db:studio      # browse runs, tasks, and the message log
 ```
 
 Requires Node 22+ and pnpm 10.
+
+## Deploying
+
+```bash
+pnpm build          # dist/orchestrator.mjs + dist/migrate.mjs + the dashboard
+pnpm db:migrate     # apply the schema
+pnpm start          # node dist/orchestrator.mjs
+```
+
+Or as containers:
+
+```bash
+docker compose up --build
+```
+
+The orchestrator bundles to a single file that plain `node` runs — no pnpm, no
+TypeScript, no `node_modules`. The dashboard's production server serves the
+build and forwards `/api` and `/ws` to `ORCHESTRATOR_URL`, so the browser stays
+same-origin exactly as it does behind Vite in development.
+
+**A deployment needs a real `DATABASE_URL`.** PGlite ships WebAssembly that
+cannot be bundled, so a built artifact has no embedded database — which is the
+right constraint anyway, since PGlite allows one writer and could not be shared
+by two instances.
+
+### Migrations
+
+`packages/db/migrations` holds ordered SQL, generated with `pnpm db:generate`
+and applied with `pnpm db:migrate`. `db:push` is still there for prototyping,
+but it resolves drift by dropping whatever does not match, which is not
+something to point at a database holding real runs.
+
+| | |
+|---|---|
+| `pnpm db:migrate` | apply everything pending |
+| `pnpm db:migrate --status` | what is applied, what is not |
+| `pnpm db:migrate --baseline` | record migrations as applied **without running them** |
+
+`--baseline` is for adopting a database that already matches the schema — one
+built with `db:push` before migrations existed. Running the first migration
+there would fail on its first `CREATE TABLE`; baselining writes the same
+bookkeeping the migrator would have, so later migrations apply normally.
+
+`pnpm test:unit` applies both the migrations and the embedded schema to a fresh
+in-memory Postgres and compares them column by column, because they are written
+by hand in two places and drift silently otherwise.
 
 ## Status
 

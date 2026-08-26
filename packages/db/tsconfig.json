@@ -1,0 +1,15 @@
+{
+  "//": "Exists only for drizzle-kit, whose bundled esbuild predates ES2023 and reads the nearest tsconfig when transpiling the schema. The repository itself is typechecked by the root config.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}
