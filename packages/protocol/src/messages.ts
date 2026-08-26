@@ -25,6 +25,7 @@ export const MessageTypeSchema = z.enum([
   "REVIEW_APPROVED",
   // runtime plumbing
   "PLAN_READY",
+  "PLAN_REVISED",
   "QUERY",
   "QUERY_RESPONSE",
   "LOG",

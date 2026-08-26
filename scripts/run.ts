@@ -41,6 +41,8 @@ ${C.bold("usage")}: pnpm run:agent --repo=<git-url> --goal="<what to build>"
   --dry-plan                        plan only, do not run workers
   --no-review                       skip code review (saves 1 request per task)
   --review-rounds=1                 revision attempts after a change request
+  --max-recoveries=2                master interventions allowed (1 request each)
+  --max-attempts=2                  dispatches allowed per task before abandoning
   --reuse-plan=<runId>              re-run a previous run's plan without re-planning
                                     (saves the planning request against a tight quota)
 `);
@@ -97,6 +99,14 @@ ${C.bold("usage")}: pnpm run:agent --repo=<git-url> --goal="<what to build>"
           console.log(`${C.dim(new Date().toLocaleTimeString())} ${colour(e.status.padEnd(8))} ${e.taskId}${e.detail ? C.dim(" - " + e.detail) : ""}`);
           break;
         }
+        case "redistribute": {
+          const colour = e.strategy === "abandon" ? C.red : e.strategy === "rescope" ? C.yellow : C.cyan;
+          console.log(
+            `${C.dim(new Date().toLocaleTimeString())} ${colour("master".padEnd(8))} ` +
+            `${e.strategy} ${e.taskId}${C.dim(" — " + e.detail)}`,
+          );
+          break;
+        }
         case "message":
           if (e.message.type === "LOG") console.log(C.dim(`           ${e.message.content}`));
           break;
@@ -115,6 +125,8 @@ ${C.bold("usage")}: pnpm run:agent --repo=<git-url> --goal="<what to build>"
       planOnly: flag("dry-plan"),
       skipReview: flag("no-review"),
       maxReviewRounds: Number(arg("review-rounds", "1")),
+      maxRecoveries: Number(arg("max-recoveries", "2")),
+      maxAttemptsPerTask: Number(arg("max-attempts", "2")),
     });
 
     console.log(`\n${C.bold("results")} ${C.dim(`run ${runId} in ${Math.round((Date.now() - started) / 1000)}s`)}`);

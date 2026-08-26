@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { AgentChannel, type MessageBus } from "@kapi/bus";
 import { createCodingEngine, type CodingEngine } from "@kapi/agent-engine";
-import { planFromSandbox } from "@kapi/agent-runtime";
+import { decideRecovery, planFromSandbox } from "@kapi/agent-runtime";
 import { createLLM, type RoutedLLM } from "@kapi/llm";
-import type { AgentMessage, PlannedTask, TaskGraph } from "@kapi/protocol";
-import { workerId } from "@kapi/protocol";
+import type { AgentMessage, PlannedTask, RecoveryDecision, TaskGraph } from "@kapi/protocol";
+import { remapDependencies, workerId } from "@kapi/protocol";
 import {
   cloneRepo, createRemoteBranch, createSandboxProvider, integrationBranch, isEmptyRepo,
   mergeIntoIntegration, seedEmptyRepo, taskBranch, type ProviderName, type SandboxProvider,
@@ -31,6 +31,10 @@ export type RunRequest = {
   skipReview?: boolean;
   /** Revision attempts allowed after a change request. */
   maxReviewRounds?: number;
+  /** Master interventions allowed per run. Each costs one LLM request. */
+  maxRecoveries?: number;
+  /** Times a single task may be dispatched before it is abandoned. */
+  maxAttemptsPerTask?: number;
   /** Stop after planning, without dispatching any worker. */
   planOnly?: boolean;
   /**
@@ -42,6 +46,7 @@ export type RunRequest = {
 };
 
 export type RunEvent =
+  | { kind: "redistribute"; runId: string; taskId: string; strategy: string; detail: string }
   | { kind: "status"; runId: string; status: string; detail?: string }
   | { kind: "message"; message: AgentMessage }
   | { kind: "plan"; runId: string; graph: TaskGraph }
@@ -425,7 +430,13 @@ export class RunEngine {
   ) {
     const engine = (this.opts.createEngine ?? createCodingEngine)(llm);
     const contract = renderContract(graph.contract);
-    const byId = new Map(graph.tasks.map((t) => [t.id, t]));
+
+    /**
+     * The task set is mutable: the master may retry a task, replace it with
+     * different ones, or release dependants from it while the run is in flight.
+     * A fixed array cannot express any of that.
+     */
+    const tasks = new Map<string, PlannedTask>(graph.tasks.map((t) => [t.id, t]));
 
     // Whether pushing is possible at all decides the shape of the run - there
     // is no integration branch to merge into without it. The tokens themselves
@@ -436,18 +447,128 @@ export class RunEngine {
     const succeeded = new Set<string>();
     const failed = new Set<string>();
     const started = new Set<string>();
+    const attempts = new Map<string, number>();
     const inFlight = new Map<string, Promise<void>>();
 
-    const blockedBy = (t: PlannedTask) => t.dependsOn.filter((d) => failed.has(d));
-    const isReady = (t: PlannedTask) => t.dependsOn.every((d) => succeeded.has(d));
+    const maxRecoveries = req.maxRecoveries ?? Number(process.env.KAPI_MAX_RECOVERIES ?? 2);
+    const maxAttempts = req.maxAttemptsPerTask ?? 2;
+    let recoveriesUsed = 0;
+
+    const dependantsOf = (id: string) =>
+      [...tasks.values()].filter((t) => t.dependsOn.includes(id)).map((t) => t.id);
+
+    /**
+     * Decides what to do about a failed task and rewrites the graph.
+     * Returns true when the task should be treated as failed for good.
+     */
+    const recover = async (task: PlannedTask, outcome: WorkerOutcome | null, error?: string): Promise<boolean> => {
+      const attemptCount = attempts.get(task.id) ?? 1;
+
+      if (recoveriesUsed >= maxRecoveries) {
+        this.#emit({
+          kind: "redistribute", runId, taskId: task.id, strategy: "abandon",
+          detail: `recovery budget spent (${maxRecoveries})`,
+        });
+        return true;
+      }
+      if (attemptCount >= maxAttempts) {
+        this.#emit({
+          kind: "redistribute", runId, taskId: task.id, strategy: "abandon",
+          detail: `already attempted ${attemptCount} time(s)`,
+        });
+        return true;
+      }
+
+      recoveriesUsed++;
+      let decision: RecoveryDecision;
+      try {
+        const result = await decideRecovery(llm, {
+          task,
+          failure: {
+            summary: outcome?.summary ?? error ?? "the worker did not report a reason",
+            error,
+            log: outcome?.log,
+            attempts: attemptCount,
+            incomplete: outcome?.incomplete ?? false,
+            review: outcome?.review ?? null,
+          },
+          existingIds: [...tasks.keys()].filter((id) => id !== task.id),
+          dependants: dependantsOf(task.id),
+          goal: graph.goal,
+          contract,
+        });
+        decision = result.decision;
+      } catch (err) {
+        // A failed recovery must not take the run down with it.
+        this.#emit({
+          kind: "redistribute", runId, taskId: task.id, strategy: "abandon",
+          detail: `master could not decide: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        return true;
+      }
+
+      await master.send("broadcast", "PLAN_REVISED",
+        `${task.id}: ${decision.strategy} — ${decision.reasoning}`, { taskId: task.id });
+      this.#emit({
+        kind: "redistribute", runId, taskId: task.id,
+        strategy: decision.strategy, detail: decision.reasoning,
+      });
+
+      if (decision.strategy === "retry") {
+        // Re-dispatch with the master's guidance appended, so the worker does
+        // something different rather than repeating what already failed.
+        tasks.set(task.id, {
+          ...task,
+          instruction: `${task.instruction}\n\n---\n\nA previous attempt failed. The master's guidance:\n${decision.guidance}`,
+        });
+        started.delete(task.id);
+        await this.store.setTaskStatus(runId, task.id, "pending", { error: null });
+        return false;
+      }
+
+      if (decision.strategy === "rescope") {
+        const replacementIds = decision.replacementTasks.map((t) => t.id);
+        tasks.delete(task.id);
+        // Anything waiting on the replaced task must now wait on its
+        // replacements, or it blocks forever on an id that will never run.
+        for (const [id, t] of tasks) {
+          const [remapped] = remapDependencies([t], task.id, replacementIds);
+          tasks.set(id, remapped);
+        }
+        for (const replacement of decision.replacementTasks) {
+          tasks.set(replacement.id, replacement);
+          await this.store.setTaskStatus(runId, replacement.id, "pending").catch(() => {});
+        }
+        await this.store.savePlanAdditions(runId, decision.replacementTasks);
+        await this.store.setTaskStatus(runId, task.id, "cancelled", {
+          error: `rescoped into: ${replacementIds.join(", ")}`,
+        });
+        await this.store.saveArtifact(runId, "recovery", decision, task.id);
+        return false;
+      }
+
+      // abandon
+      await this.store.saveArtifact(runId, "recovery", decision, task.id);
+      if (decision.dependantsCanProceed) {
+        // Release dependants: their work stands on its own without this task.
+        for (const [id, t] of tasks) {
+          if (t.dependsOn.includes(task.id)) {
+            tasks.set(id, { ...t, dependsOn: t.dependsOn.filter((d) => d !== task.id) });
+          }
+        }
+      }
+      return true;
+    };
 
     const launch = (task: PlannedTask) => {
       started.add(task.id);
+      attempts.set(task.id, (attempts.get(task.id) ?? 0) + 1);
       const worker = workerId(task.role);
 
       const promise = (async () => {
         await this.store.setTaskStatus(runId, task.id, "running", {
-          assignedTo: worker, startedAt: new Date(), branch: `kapi/run-${runId}/${task.id}`,
+          assignedTo: worker, startedAt: new Date(), branch: taskBranch(runId, task.id),
+          attempts: attempts.get(task.id) ?? 1,
         });
         await this.store.upsertAgent({ runId, agentId: worker, role: task.role, status: "running" });
         if (!req.skipReview) {
@@ -456,7 +577,6 @@ export class RunEngine {
         this.#emit({ kind: "task", runId, taskId: task.id, status: "running" });
 
         const channel = new AgentChannel(this.bus, runId, worker);
-        // Answer teammates from the shared contract rather than leaving them to time out.
         const off = channel.onMessage((m) => {
           if (m.type === "QUERY" || m.type === "NEEDS_HELP") {
             void channel.reply(m, "QUERY_RESPONSE",
@@ -515,28 +635,38 @@ export class RunEngine {
           );
 
           outcomes.set(task.id, outcome);
-          (outcome.ok ? succeeded : failed).add(task.id);
 
-          await this.store.setTaskStatus(runId, task.id, outcome.ok ? "review" : "failed", {
-            finishedAt: new Date(), branch: outcome.branch,
-            error: outcome.ok
-              ? null
-              : outcome.incomplete
-                ? `hit the step limit with ${outcome.commits.length} commit(s) on ${outcome.branch} - branch is reviewable but unfinished`
-                : outcome.summary,
-          });
-          await this.store.saveArtifact(runId, "worker-result", outcome, task.id);
-          this.#emit({
-            kind: "task", runId, taskId: task.id,
-            status: outcome.ok ? "review" : "failed",
-            detail: `${outcome.filesChanged.length} file(s), ${outcome.commits.length} commit(s)` +
-              (outcome.incomplete ? " — cut off at step limit" : ""),
-          });
+          if (outcome.ok) {
+            succeeded.add(task.id);
+            await this.store.setTaskStatus(runId, task.id, "review", {
+              finishedAt: new Date(), branch: outcome.branch, error: null,
+            });
+            await this.store.saveArtifact(runId, "worker-result", outcome, task.id);
+            this.#emit({
+              kind: "task", runId, taskId: task.id, status: "review",
+              detail: `${outcome.filesChanged.length} file(s), ${outcome.commits.length} commit(s)` +
+                (outcome.incomplete ? " — cut off at step limit" : ""),
+            });
+            return;
+          }
+
+          // Failed: ask the master what to do before giving up on it.
+          const giveUp = await recover(task, outcome);
+          if (giveUp) {
+            failed.add(task.id);
+            await this.store.setTaskStatus(runId, task.id, "failed", {
+              finishedAt: new Date(), branch: outcome.branch, error: outcome.summary,
+            });
+            this.#emit({ kind: "task", runId, taskId: task.id, status: "failed", detail: outcome.summary });
+          }
         } catch (err) {
-          failed.add(task.id);
           const detail = err instanceof Error ? err.message : String(err);
-          await this.store.setTaskStatus(runId, task.id, "failed", { error: detail, finishedAt: new Date() });
-          this.#emit({ kind: "task", runId, taskId: task.id, status: "failed", detail });
+          const giveUp = await recover(task, null, detail);
+          if (giveUp) {
+            failed.add(task.id);
+            await this.store.setTaskStatus(runId, task.id, "failed", { error: detail, finishedAt: new Date() });
+            this.#emit({ kind: "task", runId, taskId: task.id, status: "failed", detail });
+          }
         } finally {
           off();
           await channel.close();
@@ -548,12 +678,13 @@ export class RunEngine {
       inFlight.set(task.id, promise);
     };
 
-    // Drain loop: launch what is ready, wait for the first completion, repeat.
-    while (started.size < graph.tasks.length || inFlight.size > 0) {
-      for (const task of graph.tasks) {
+    // Drain loop: launch whatever is ready, wait for the first completion, repeat.
+    // The task set can change between iterations, so it is re-read every pass.
+    for (;;) {
+      for (const task of [...tasks.values()]) {
         if (started.has(task.id) || inFlight.size >= cfg.maxConcurrency) continue;
 
-        const deadDeps = blockedBy(task);
+        const deadDeps = task.dependsOn.filter((d) => failed.has(d));
         if (deadDeps.length > 0) {
           started.add(task.id);
           failed.add(task.id);
@@ -561,28 +692,34 @@ export class RunEngine {
             error: `dependency failed: ${deadDeps.join(", ")}`,
           });
           await master.send("broadcast", "BLOCKED",
-            `${task.id} cannot run - dependency failed: ${deadDeps.join(", ")}`, { taskId: task.id, status: "blocked" });
+            `${task.id} cannot run - dependency failed: ${deadDeps.join(", ")}`,
+            { taskId: task.id, status: "blocked" });
           this.#emit({ kind: "task", runId, taskId: task.id, status: "blocked", detail: deadDeps.join(", ") });
           continue;
         }
 
-        if (isReady(task)) launch(task);
+        if (task.dependsOn.every((d) => succeeded.has(d))) launch(task);
       }
 
       if (inFlight.size === 0) {
-        const stuck = graph.tasks.filter((t) => !started.has(t.id));
-        if (stuck.length > 0) {
-          // Unreachable if validateTaskGraph did its job, but never spin forever.
-          for (const t of stuck) {
-            started.add(t.id);
-            failed.add(t.id);
-            await this.store.setTaskStatus(runId, t.id, "blocked", { error: "unsatisfiable dependencies" });
-          }
+        const remaining = [...tasks.values()].filter((t) => !started.has(t.id));
+        if (remaining.length === 0) break;
+
+        // Nothing running and nothing launchable: the rest can never satisfy
+        // their dependencies. Never spin.
+        for (const t of remaining) {
+          started.add(t.id);
+          failed.add(t.id);
+          await this.store.setTaskStatus(runId, t.id, "blocked", { error: "unsatisfiable dependencies" });
+          this.#emit({ kind: "task", runId, taskId: t.id, status: "blocked", detail: "unsatisfiable dependencies" });
         }
         break;
       }
 
       await Promise.race(inFlight.values());
     }
+
+    // The plan the run actually executed, which may differ from the one planned.
+    graph.tasks = [...tasks.values()];
   }
 }
