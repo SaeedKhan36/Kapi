@@ -39,6 +39,8 @@ ${C.bold("usage")}: pnpm run:agent --repo=<git-url> --goal="<what to build>"
   --concurrency=4                   max parallel workers
   --max-tasks=6                     cap the plan size
   --dry-plan                        plan only, do not run workers
+  --reuse-plan=<runId>              re-run a previous run's plan without re-planning
+                                    (saves the planning request against a tight quota)
 `);
     process.exit(1);
   }
@@ -55,7 +57,22 @@ ${C.bold("usage")}: pnpm run:agent --repo=<git-url> --goal="<what to build>"
   console.log(`  database: ${C.cyan(describeDbTarget())}`);
   console.log(`  push/PR:  ${process.env.GITHUB_TOKEN ? C.green("enabled") : C.yellow("disabled (no GITHUB_TOKEN)")}\n`);
 
+  // Re-planning costs a request every time. When iterating on execution, reuse
+  // a plan we already paid for.
+  const reuseFrom = arg("reuse-plan");
+  let planOverride: (() => Promise<any>) | undefined;
+  if (reuseFrom) {
+    const prior = await store.getRun(reuseFrom);
+    if (!prior?.plan) {
+      console.error(C.red(`run ${reuseFrom} has no stored plan`));
+      process.exit(1);
+    }
+    console.log(`  ${C.dim("reusing plan from run " + reuseFrom)}\n`);
+    planOverride = async () => prior.plan;
+  }
+
   const engine = new RunEngine(store, bus, {
+    ...(planOverride ? { planOverride } : {}),
     onEvent: (e) => {
       switch (e.kind) {
         case "status":

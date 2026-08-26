@@ -5,11 +5,23 @@ loadEnv();
 const key = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
 if (!key) { console.error("no key"); process.exit(1); }
 
-const models = process.argv.slice(2).length
-  ? process.argv.slice(2)
+const named = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const models = named.length
+  ? named
   : ["gemini-3.1-pro-preview", "gemini-pro-latest", "gemini-2.5-pro",
      "gemini-3.5-flash", "gemini-flash-latest", "gemini-2.5-flash",
      "gemini-3.1-flash-lite", "gemini-3-flash-preview"];
+
+// Each probe spends one request against a 20-per-model-per-day cap, so probing
+// everything costs a meaningful slice of the budget. Make that explicit.
+if (!named.length && !process.argv.includes("--yes")) {
+  console.error(
+    `This probes ${models.length} models and spends 1 request of each model's ` +
+    `20/day budget.\n  Pass --yes to proceed, or name specific models:\n` +
+    `    pnpm tsx scripts/probe-models.ts gemini-3.5-flash\n`,
+  );
+  process.exit(1);
+}
 
 for (const model of models) {
   const res = await fetch(
