@@ -77,8 +77,26 @@ export function describeDbTarget(url = process.env.DATABASE_URL): string {
  */
 async function ensureSchema(client: { exec: (sql: string) => Promise<unknown> }) {
   await client.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT,
+      name TEXT,
+      github_login TEXT,
+      organization_id TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS github_installations (
+      owner TEXT NOT NULL,
+      repo TEXT NOT NULL,
+      installation_id INTEGER NOT NULL,
+      permissions JSONB,
+      checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (owner, repo)
+    );
     CREATE TABLE IF NOT EXISTS runs (
       id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
       goal TEXT NOT NULL,
       repo_url TEXT NOT NULL,
       base_branch TEXT NOT NULL DEFAULT 'main',
@@ -95,6 +113,10 @@ async function ensureSchema(client: { exec: (sql: string) => Promise<unknown> })
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       finished_at TIMESTAMPTZ
     );
+    -- Runs predate authentication, so an existing .kapi/db needs the column
+    -- added rather than created. CREATE TABLE IF NOT EXISTS would skip it.
+    ALTER TABLE runs ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS runs_user_idx ON runs (user_id, created_at);
     CREATE TABLE IF NOT EXISTS agents (
       run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
       agent_id TEXT NOT NULL,

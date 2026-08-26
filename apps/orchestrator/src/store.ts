@@ -4,7 +4,7 @@ import type { Db } from "@kapi/db";
 import { schema } from "@kapi/db";
 import type { AgentMessage, TaskGraph, TaskStatus } from "@kapi/protocol";
 
-const { runs, tasks, agents, agentMessages, artifacts } = schema;
+const { runs, tasks, agents, agentMessages, artifacts, users } = schema;
 
 /** Thin persistence layer so the run engine never writes SQL inline. */
 export class Store {
@@ -12,22 +12,49 @@ export class Store {
 
   async createRun(input: {
     id: string; goal: string; repoUrl: string; baseBranch: string;
-    integrationBranch: string; sandboxProvider: string;
+    integrationBranch: string; sandboxProvider: string; userId?: string;
   }) {
     await this.db.insert(runs).values(input);
+  }
+
+  /**
+   * Records that someone signed in, and returns nothing they did not already
+   * give us. Deliberately an upsert: WorkOS owns the account, this row only
+   * exists so runs have something to point at.
+   */
+  async upsertUser(input: {
+    id: string; email?: string; name?: string;
+    githubLogin?: string; organizationId?: string;
+  }) {
+    const patch = { ...input, lastSeenAt: new Date() };
+    await this.db.insert(users).values(patch)
+      .onConflictDoUpdate({ target: users.id, set: patch });
   }
 
   async updateRun(id: string, patch: Partial<typeof runs.$inferInsert>) {
     await this.db.update(runs).set(patch).where(eq(runs.id, id));
   }
 
-  async getRun(id: string) {
-    const [row] = await this.db.select().from(runs).where(eq(runs.id, id));
+  /**
+   * One run, scoped to its owner when there is one.
+   *
+   * A run belonging to someone else comes back as null rather than as a
+   * permission error: whether a given id exists is itself information the
+   * caller is not entitled to.
+   */
+  async getRun(id: string, userId?: string) {
+    const [row] = await this.db.select().from(runs).where(
+      userId === undefined ? eq(runs.id, id) : and(eq(runs.id, id), eq(runs.userId, userId)),
+    );
     return row ?? null;
   }
 
-  async listRuns() {
-    return this.db.select().from(runs).orderBy(asc(runs.createdAt));
+  /** Every run, or just one user's. Omitting `userId` is the CLI's unscoped view. */
+  async listRuns(userId?: string) {
+    const query = this.db.select().from(runs);
+    return userId === undefined
+      ? query.orderBy(asc(runs.createdAt))
+      : query.where(eq(runs.userId, userId)).orderBy(asc(runs.createdAt));
   }
 
   async savePlan(runId: string, graph: TaskGraph) {

@@ -21,6 +21,8 @@ import type { Store } from "./store.ts";
 export type RunRequest = {
   goal: string;
   repoUrl: string;
+  /** Who asked. Absent from the CLI, which has no session to attribute to. */
+  userId?: string;
   baseBranch?: string;
   maxConcurrency?: number;
   maxTasks?: number;
@@ -152,6 +154,7 @@ export class RunEngine {
     await this.store.createRun({
       id: runId, goal: req.goal, repoUrl: req.repoUrl, baseBranch,
       integrationBranch: integrationBranch(runId), sandboxProvider: provider.name,
+      userId: req.userId,
     });
     req.onStart?.(runId);
 

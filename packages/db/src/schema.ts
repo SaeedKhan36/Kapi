@@ -3,8 +3,50 @@ import {
 } from "drizzle-orm/pg-core";
 
 /** One user request = one run = one integration branch = (eventually) one PR. */
+/**
+ * A person who can start runs.
+ *
+ * `id` is the WorkOS subject claim, so this table never holds a password and
+ * never holds a GitHub token: the session lives in WorkOS and the GitHub grant
+ * lives in WorkOS Pipes. What is stored here is only what Kapi needs to
+ * attribute work and render a dashboard.
+ */
+export const users = pgTable("users", {
+  id: text("id").primaryKey(),
+  email: text("email"),
+  name: text("name"),
+  githubLogin: text("github_login"),
+  organizationId: text("organization_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Which repositories the GitHub App has been let into.
+ *
+ * A cache, not a source of truth - GitHub remains authoritative and an
+ * installation can be revoked at any moment, so this is only ever used to
+ * avoid a round trip, never to grant access on its own.
+ */
+export const githubInstallations = pgTable(
+  "github_installations",
+  {
+    owner: text("owner").notNull(),
+    repo: text("repo").notNull(),
+    installationId: integer("installation_id").notNull(),
+    permissions: jsonb("permissions"),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.owner, t.repo] })],
+);
+
 export const runs = pgTable("runs", {
   id: text("id").primaryKey(),
+  /**
+   * Who asked for this run. Nullable because runs predating authentication
+   * exist, and because the CLI has no WorkOS session to attribute work to.
+   */
+  userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
   goal: text("goal").notNull(),
   repoUrl: text("repo_url").notNull(),
   baseBranch: text("base_branch").notNull().default("main"),
@@ -21,7 +63,7 @@ export const runs = pgTable("runs", {
   sandboxSeconds: integer("sandbox_seconds").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
-});
+}, (t) => [index("runs_user_idx").on(t.userId, t.createdAt)]);
 
 /** A live agent process. One row per master/worker sandbox. */
 export const agents = pgTable(
