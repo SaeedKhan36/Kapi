@@ -10,3 +10,6 @@ dist/
 .tanstack/
 apps/web/dist/
 apps/web/src/routeTree.gen.ts
+
+# Worktrees created by other Claude Code sessions
+.claude/worktrees/

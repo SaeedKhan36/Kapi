@@ -10,6 +10,7 @@ const TYPE_TONE: Record<string, string> = {
   API_READY: "text-ok",
   SCHEMA_READY: "text-ok",
   PLAN_READY: "text-accent",
+  PLAN_REVISED: "text-warn",
   TASK_ASSIGNED: "text-accent",
   TASK_STARTED: "text-accent",
   QUERY: "text-warn",

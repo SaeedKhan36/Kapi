@@ -20,7 +20,7 @@ export type TaskGraph = {
 export type Task = {
   runId: string; taskId: string; title: string; instruction: string; role: string;
   status: string; dependsOn: string[]; touches: string[]; acceptance: string[];
-  assignedTo: string | null; branch: string | null; error: string | null;
+  assignedTo: string | null; branch: string | null; error: string | null; attempts: number;
   startedAt: string | null; finishedAt: string | null;
 };
 
@@ -43,4 +43,5 @@ export type RunEvent =
   | { kind: "status"; runId: string; status: string; detail?: string }
   | { kind: "message"; message: Message }
   | { kind: "plan"; runId: string; graph: TaskGraph }
-  | { kind: "task"; runId: string; taskId: string; status: string; detail?: string };
+  | { kind: "task"; runId: string; taskId: string; status: string; detail?: string }
+  | { kind: "redistribute"; runId: string; taskId: string; strategy: string; detail: string };

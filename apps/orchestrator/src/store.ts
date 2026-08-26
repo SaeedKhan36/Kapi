@@ -45,6 +45,21 @@ export class Store {
     );
   }
 
+  /**
+   * Inserts tasks the master created mid-run during redistribution.
+   * Idempotent, because a retry of the same recovery must not duplicate rows.
+   */
+  async savePlanAdditions(runId: string, added: TaskGraph["tasks"]) {
+    if (added.length === 0) return;
+    await this.db.insert(tasks).values(
+      added.map((t) => ({
+        runId, taskId: t.id, title: t.title, instruction: t.instruction,
+        role: t.role, dependsOn: t.dependsOn, touches: t.touches,
+        acceptance: t.acceptance, status: "pending" as const,
+      })),
+    ).onConflictDoNothing();
+  }
+
   async setTaskStatus(runId: string, taskId: string, status: TaskStatus, patch: Partial<typeof tasks.$inferInsert> = {}) {
     await this.db.update(tasks)
       .set({ status, ...patch })

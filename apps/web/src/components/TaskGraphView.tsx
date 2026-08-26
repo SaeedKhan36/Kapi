@@ -82,6 +82,11 @@ export function TaskGraphView({ tasks }: { tasks: Task[] }) {
                   ))}
                 </div>
 
+                {task.attempts > 1 && (
+                  <p className="mt-1.5 text-[10px] text-warn">
+                    attempt {task.attempts} — the master re-dispatched this
+                  </p>
+                )}
                 {task.branch && (
                   <p className="mt-2 truncate font-mono text-[10px] text-muted">{task.branch}</p>
                 )}

@@ -131,6 +131,30 @@ human, and the run reports the task as failed rather than quietly shipping it.
 
 Each review costs exactly one LLM request. `--no-review` skips it.
 
+### Dynamic redistribution
+
+A failed task does not simply block everything downstream. The master examines
+the failure — the worker's log, the reviewer's blocking findings, how many
+attempts it has had — and picks one of three interventions:
+
+- **retry** with concrete guidance, when the worker was capable but went wrong in
+  a fixable way. Guidance is mandatory; a retry without it just repeats what
+  already failed.
+- **rescope** into 1–3 replacement tasks, when the *task* was the problem. Tasks
+  waiting on the replaced one are rewired to wait on its replacements, or they
+  would block forever on an id that will never run.
+- **abandon**, and then decide whether dependants can proceed anyway. Work that
+  was incidental to them should not sink them.
+
+Because the plan changes mid-run, the scheduler holds a mutable task set rather
+than a fixed list.
+
+Every intervention is bounded: `--max-recoveries` per run (default 2, one LLM
+request each) and `--max-attempts` per task (default 2). A decision that would
+corrupt the graph — a replacement colliding with a live task, or one depending
+on the task it replaces — is rejected and degraded to abandon rather than
+spliced in.
+
 ### Two ideas worth knowing
 
 **The shared contract prevents deadlock.** Workers run concurrently and cannot
