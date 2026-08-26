@@ -6,7 +6,7 @@
  * the store, which scopes reads, and the event hub, which fans out the live
  * feed. Both are exercised directly.
  */
-import { authMode, LOCAL_USER } from "../apps/orchestrator/src/auth.ts";
+import { authMode, LOCAL_USER, providerAllowed } from "../apps/orchestrator/src/auth.ts";
 import { EventHub } from "../apps/orchestrator/src/events.ts";
 import { Store } from "../apps/orchestrator/src/store.ts";
 import { createDb } from "../packages/db/src/index.ts";
@@ -34,6 +34,19 @@ const main = async () => {
   check("explicit none wins over configuration",
     authMode({ KAPI_AUTH_MODE: "none", WORKOS_CLIENT_ID: "c", WORKOS_API_KEY: "k" } as NodeJS.ProcessEnv) === "none");
   check("local operator has a stable id", LOCAL_USER.id === "local");
+
+  console.log("\n\x1b[1msandbox provider selection\x1b[0m\n");
+
+  // `local` runs agent commands as host processes with no isolation, so a
+  // caller choosing it on a shared deployment is code execution, not a
+  // preference. One operator picking it for their own machine is the point.
+  check("single operator may choose local", providerAllowed("none", "local"));
+  check("multi-user may NOT choose local", !providerAllowed("workos", "local"),
+    "otherwise any signed-in user gets RCE on the orchestrator");
+  check("multi-user may choose daytona", providerAllowed("workos", "daytona"));
+  check("multi-user may choose docker", providerAllowed("workos", "docker"));
+  check("omitting the provider is fine", providerAllowed("workos", undefined),
+    "falls back to SANDBOX_PROVIDER");
 
   console.log("\n\x1b[1mrun ownership\x1b[0m\n");
 

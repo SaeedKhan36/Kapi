@@ -4,7 +4,7 @@ import { createCodingEngine, type CodingEngine } from "@kapi/agent-engine";
 import { decideRecovery, planFromSandbox } from "@kapi/agent-runtime";
 import { createLLM, type RoutedLLM } from "@kapi/llm";
 import type { AgentMessage, PlannedTask, RecoveryDecision, TaskGraph } from "@kapi/protocol";
-import { remapDependencies, workerId } from "@kapi/protocol";
+import { detach, remapDependencies, workerId } from "@kapi/protocol";
 import {
   cloneRepo, createRemoteBranch, createSandboxProvider, integrationBranch, isEmptyRepo,
   mergeIntoIntegration, seedEmptyRepo, taskBranch, type ProviderName, type SandboxProvider,
@@ -164,13 +164,19 @@ export class RunEngine {
     req.onStart?.(runId);
 
     // Persist every message that crosses the bus, for audit and for the UI.
+    // Detached, not awaited: the bus must not block on the database. Detached
+    // and *caught*, because an unhandled rejection here would take the whole
+    // orchestrator down and orphan every sandbox it is paying for.
     const unsubscribe = this.bus.subscribeAll(runId, (m) => {
-      void this.store.recordMessage(m);
+      detach(this.store.recordMessage(m), `persisting ${m.type} for run ${runId}`);
       this.#emit({ kind: "message", message: m });
     });
 
     const onUsage = (u: { requests: number; totalTokens: number }) => {
-      void this.store.updateRun(runId, { llmRequests: u.requests, llmTokens: u.totalTokens });
+      detach(
+        this.store.updateRun(runId, { llmRequests: u.requests, llmTokens: u.totalTokens }),
+        `recording usage for run ${runId}`,
+      );
     };
     const llm = this.opts.createLlm
       ? this.opts.createLlm(onUsage)
@@ -579,8 +585,11 @@ export class RunEngine {
         const channel = new AgentChannel(this.bus, runId, worker);
         const off = channel.onMessage((m) => {
           if (m.type === "QUERY" || m.type === "NEEDS_HELP") {
-            void channel.reply(m, "QUERY_RESPONSE",
-              `I am mid-task on "${task.title}". Build against the shared contract:\n${contract}`);
+            detach(
+              channel.reply(m, "QUERY_RESPONSE",
+                `I am mid-task on "${task.title}". Build against the shared contract:\n${contract}`),
+              `answering ${m.type} from ${m.from}`,
+            );
           }
         });
 

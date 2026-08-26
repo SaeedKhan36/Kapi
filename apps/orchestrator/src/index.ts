@@ -16,7 +16,7 @@ import {
 import { Store } from "./store.ts";
 import { RunEngine, RunNotAuthorizedError } from "./run-engine.ts";
 import { EventHub } from "./events.ts";
-import { createAuth, type AuthedEnv } from "./auth.ts";
+import { createAuth, providerAllowed, type AuthedEnv } from "./auth.ts";
 import { repoAccessFor } from "./github-routes.ts";
 
 const CreateRunSchema = z.object({
@@ -146,6 +146,13 @@ app.post("/api/runs", async (c) => {
     return c.json({ error: "repoUrl must be a GitHub repository" }, 400);
   }
 
+  if (!providerAllowed(auth.mode, parsed.data.providerName)) {
+    return c.json({
+      error: "the local sandbox provider is not available on a multi-user deployment",
+      code: "PROVIDER_NOT_ALLOWED",
+    }, 403);
+  }
+
   const user = c.get("user");
   let repoAccess;
   try {
@@ -259,6 +266,23 @@ server.on("upgrade", (req, socket, head) => {
       ws.on("error", remove);
     });
   })();
+});
+
+/**
+ * Last resort, not a licence to leak rejections.
+ *
+ * Every known source is caught at the point it is created (see `detach`), and
+ * this exists for the ones nobody has found yet. Node's default is to abort on
+ * an unhandled rejection, which for this process means killing every run in
+ * flight and orphaning the sandboxes they are paying for by the second -
+ * strictly worse than logging and carrying on. Anything logged here is a bug
+ * to fix at its source.
+ */
+process.on("unhandledRejection", (reason) => {
+  console.error(
+    "[kapi] unhandled rejection (continuing):",
+    reason instanceof Error ? (reason.stack ?? reason.message) : reason,
+  );
 });
 
 const shutdown = async () => {

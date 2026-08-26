@@ -32,6 +32,21 @@ export function authMode(env: NodeJS.ProcessEnv = process.env): AuthMode {
 
 export type AuthedEnv = { Variables: { user: WorkOSUser } };
 
+/**
+ * Whether a caller may choose this sandbox provider.
+ *
+ * `local` runs agent commands as ordinary host processes - it exists for
+ * developing orchestration logic and says so in its own docstring. Letting a
+ * request select it grants code execution on the orchestrator, which is a much
+ * larger thing than "may start a run". With one operator that is exactly the
+ * intended use; with more than one it is a privilege escalation, so the
+ * provider becomes a deployment decision rather than a request parameter.
+ */
+export function providerAllowed(mode: AuthMode, providerName?: string): boolean {
+  if (mode === "none") return true;
+  return providerName !== "local";
+}
+
 export class AuthError extends Error {
   constructor(message: string, readonly status = 401, readonly code = "UNAUTHENTICATED") {
     super(message);

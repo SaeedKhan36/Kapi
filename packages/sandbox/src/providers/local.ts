@@ -44,6 +44,34 @@ export class LocalProvider implements SandboxProvider {
     return box;
   }
 
+  /**
+   * The environment an agent command runs with.
+   *
+   * Inheriting `process.env` wholesale would hand the agent every secret the
+   * orchestrator holds - GITHUB_TOKEN, WORKOS_API_KEY, GITHUB_APP_PRIVATE_KEY,
+   * DAYTONA_API_KEY, DATABASE_URL - which defeats the point of never putting a
+   * credential in a sandbox's environment in the first place. The coding
+   * engine runs model-chosen shell commands against repository contents, so
+   * that is one `echo` away from a prompt injection.
+   *
+   * An allowlist rather than a denylist, because a denylist is wrong the day
+   * someone adds a new key. Commands run under `bash -lc`, so the login shell
+   * re-establishes anything toolchain-specific (nvm, asdf, homebrew) from the
+   * user's profile.
+   */
+  #baseEnv(): Record<string, string> {
+    const allowed = [
+      "PATH", "HOME", "USER", "LOGNAME", "SHELL",
+      "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "TZ",
+    ];
+    const env: Record<string, string> = {};
+    for (const key of allowed) {
+      const value = process.env[key];
+      if (value !== undefined) env[key] = value;
+    }
+    return env;
+  }
+
   /** Reject paths that escape the sandbox root via `..` or absolute paths. */
   #resolveInside(box: Sandbox, path: string): string {
     const target = isAbsolute(path) ? path : resolve(box.workdir, path);
@@ -66,7 +94,7 @@ export class LocalProvider implements SandboxProvider {
     return new Promise<ExecResult>((resolveExec) => {
       const child = spawn("bash", ["-lc", cmd], {
         cwd,
-        env: { ...process.env, ...this.#env.get(id), ...opts.env },
+        env: { ...this.#baseEnv(), ...this.#env.get(id), ...opts.env },
         stdio: ["ignore", "pipe", "pipe"],
       });
 
@@ -103,7 +131,7 @@ export class LocalProvider implements SandboxProvider {
 
     const child = spawn("bash", ["-lc", cmd], {
       cwd,
-      env: { ...process.env, ...this.#env.get(id), ...opts.env },
+      env: { ...this.#baseEnv(), ...this.#env.get(id), ...opts.env },
       stdio: ["ignore", "pipe", "pipe"],
     });
 

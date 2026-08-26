@@ -1,3 +1,4 @@
+import { detach } from "@kapi/protocol";
 import type { AgentId, AgentMessage } from "@kapi/protocol";
 import type { MessageBus, Unsubscribe } from "./types.ts";
 import { InProcessBus } from "./inprocess.ts";
@@ -45,13 +46,18 @@ export class RedisBus implements MessageBus {
     await this.#pub.publish(`kapi:run:${message.runId}`, JSON.stringify(message));
   }
 
+  // Subscribing is synchronous by contract, so the Redis round trip cannot be
+  // awaited here. It is detached and caught rather than voided: an unreachable
+  // Redis would otherwise reject into nothing and abort the whole process.
+  // Local delivery still works, so a run degrades to single-process instead of
+  // dying.
   subscribe(runId: string, agentId: AgentId, handler: (m: AgentMessage) => void): Unsubscribe {
-    void this.#ensureChannel(runId);
+    detach(this.#ensureChannel(runId), `subscribing to run ${runId}`);
     return this.#local.subscribe(runId, agentId, handler);
   }
 
   subscribeAll(runId: string, handler: (m: AgentMessage) => void): Unsubscribe {
-    void this.#ensureChannel(runId);
+    detach(this.#ensureChannel(runId), `subscribing to run ${runId}`);
     return this.#local.subscribeAll(runId, handler);
   }
 
