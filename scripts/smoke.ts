@@ -6,7 +6,7 @@
 import { loadEnv } from "../packages/env/src/index.ts";
 loadEnv();
 
-import { createSandboxProvider, detectBestProvider, cloneRepo, type SandboxProvider } from "../packages/sandbox/src/index.ts";
+import { createSandboxProvider, detectBestProvider, cloneRepo, integrationBranch, type SandboxProvider } from "../packages/sandbox/src/index.ts";
 import { createLLM } from "../packages/llm/src/index.ts";
 import { createDb, describeDbTarget } from "../packages/db/src/index.ts";
 
@@ -127,7 +127,7 @@ const main = async () => {
     const { runs } = await import("../packages/db/src/schema.ts");
     const id = `smoke-${Date.now().toString(36)}`;
     await db.insert(runs).values({
-      id, goal: "smoke", repoUrl: REPO, integrationBranch: `kapi/run-${id}`, sandboxProvider: provider.name,
+      id, goal: "smoke", repoUrl: REPO, integrationBranch: integrationBranch(id), sandboxProvider: provider.name,
     });
     const rows = await db.select().from(runs);
     if (!rows.some((r) => r.id === id)) throw new Error("inserted run not found");

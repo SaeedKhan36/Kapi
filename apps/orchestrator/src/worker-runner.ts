@@ -3,7 +3,7 @@ import { createBranch, pushBranch } from "@kapi/agent-engine";
 import type { AgentChannel } from "@kapi/bus";
 import type { PlannedTask } from "@kapi/protocol";
 import { workerId } from "@kapi/protocol";
-import { cloneRepo, taskBranch, type SandboxProvider } from "@kapi/sandbox";
+import { cloneRepo, taskBranch, type MergeResult, type SandboxProvider } from "@kapi/sandbox";
 
 export type WorkerConfig = {
   runId: string;
@@ -15,11 +15,19 @@ export type WorkerConfig = {
   contract: string;
   identity: { name: string; email: string };
   idleTtlSeconds: number;
+  /**
+   * Merges the finished branch into the run's integration branch while this
+   * sandbox is still alive. Serialised by the caller - concurrent pushes to one
+   * branch race. Omitted when there is nowhere to push.
+   */
+  mergeBack?: (args: { sandboxId: string; branch: string }) => Promise<MergeResult>;
 };
 
 export type WorkerOutcome = CodingResult & {
   branch: string;
   pushed: boolean;
+  merged: boolean;
+  mergeConflict: boolean;
   sandboxSeconds: number;
 };
 
@@ -87,12 +95,28 @@ export async function runWorkerTask(
     });
 
     let pushed = false;
+    let merged = false;
+    let mergeConflict = false;
+
     if (result.commits.length > 0 && cfg.githubToken) {
       try {
         await pushBranch(cfg.provider, sandboxId, "repo", branch, cfg.githubToken);
         pushed = true;
       } catch (err) {
         log(`[worker] push failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      // Merge before the sandbox is destroyed, so dependants inherit this work.
+      if (pushed && result.ok && cfg.mergeBack) {
+        const merge = await cfg.mergeBack({ sandboxId, branch });
+        merged = merge.ok;
+        mergeConflict = merge.conflicted;
+        if (!merge.ok) {
+          log(`[worker] merge into integration ${merge.conflicted ? "conflicted" : "failed"}: ${merge.detail}`);
+          await channel.send("master", merge.conflicted ? "BLOCKED" : "TASK_FAILED",
+            `could not merge ${branch} into the integration branch: ${merge.detail}`,
+            { taskId: task.id });
+        }
       }
     }
 
@@ -114,7 +138,10 @@ export async function runWorkerTask(
       }
     }
 
-    return { ...result, branch, pushed, sandboxSeconds: Math.round((Date.now() - startedAt) / 1000) };
+    return {
+      ...result, branch, pushed, merged, mergeConflict,
+      sandboxSeconds: Math.round((Date.now() - startedAt) / 1000),
+    };
   } finally {
     if (sandboxId) await cfg.provider.destroy(sandboxId).catch(() => {});
   }

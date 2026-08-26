@@ -151,6 +151,76 @@ export function shellQuote(value: string): string {
   return `'${value.split("'").join(`'\\''`)}'`;
 }
 
-/** Branch name for one task's work. Slugs are already validated by the protocol. */
-export const taskBranch = (runId: string, taskId: string) => `kapi/run-${runId}/${taskId}`;
-export const integrationBranch = (runId: string) => `kapi/run-${runId}`;
+/**
+ * Creates `branch` from `from` and pushes it, so later clones can start there.
+ * Used to stand up the run's integration branch before any worker begins.
+ */
+export async function createRemoteBranch(
+  provider: SandboxProvider,
+  sandboxId: string,
+  opts: { branch: string; from: string; token?: string; dir?: string },
+): Promise<void> {
+  const dir = opts.dir ?? "repo";
+  const res = await provider.exec(
+    sandboxId,
+    [
+      `git checkout ${shellQuote(opts.from)}`,
+      `git checkout -B ${shellQuote(opts.branch)}`,
+      `git push -u origin ${shellQuote(opts.branch)} 2>&1`,
+    ].join(" && "),
+    { cwd: dir, timeoutMs: 120_000 },
+  );
+  if (res.exitCode !== 0) {
+    throw new SandboxError(
+      `failed to create branch ${opts.branch}: ${redact(res.stdout + res.stderr, opts.token)}`,
+      provider.name,
+    );
+  }
+}
+
+export type MergeResult = { ok: boolean; conflicted: boolean; detail: string };
+
+/**
+ * Merges a finished task branch into the integration branch and pushes it.
+ *
+ * This is what makes a dependency edge mean anything: without it every worker
+ * clones the base branch and a dependant never sees the work it was waiting on.
+ * Callers must serialise merges — concurrent pushes to one branch race.
+ */
+export async function mergeIntoIntegration(
+  provider: SandboxProvider,
+  sandboxId: string,
+  opts: { integration: string; branch: string; token?: string; dir?: string },
+): Promise<MergeResult> {
+  const dir = opts.dir ?? "repo";
+  const res = await provider.exec(
+    sandboxId,
+    [
+      `git fetch origin ${shellQuote(opts.integration)} 2>&1`,
+      `git checkout ${shellQuote(opts.integration)} 2>/dev/null || git checkout -b ${shellQuote(opts.integration)} origin/${opts.integration}`,
+      `git reset --hard origin/${shellQuote(opts.integration)}`,
+      `git merge --no-edit ${shellQuote(opts.branch)} 2>&1`,
+      `git push origin ${shellQuote(opts.integration)} 2>&1`,
+    ].join(" && "),
+    { cwd: dir, timeoutMs: 180_000 },
+  );
+
+  const output = redact(res.stdout + res.stderr, opts.token);
+  if (res.exitCode === 0) return { ok: true, conflicted: false, detail: output.slice(-400) };
+
+  const conflicted = /CONFLICT|Automatic merge failed/i.test(output);
+  // Leave the working tree clean so the sandbox can still be inspected.
+  await provider.exec(sandboxId, "git merge --abort 2>/dev/null || true", { cwd: dir });
+  return { ok: false, conflicted, detail: output.slice(-400) };
+}
+
+/**
+ * Branch naming.
+ *
+ * Git stores refs as a directory tree, so `kapi/run-X` (a file) and
+ * `kapi/run-X/my-task` (which needs `kapi/run-X` to be a directory) cannot both
+ * exist. Keeping the integration ref and task refs on separate leaves of
+ * `kapi/<runId>/` avoids that collision entirely.
+ */
+export const integrationBranch = (runId: string) => `kapi/${runId}/integration`;
+export const taskBranch = (runId: string, taskId: string) => `kapi/${runId}/tasks/${taskId}`;
