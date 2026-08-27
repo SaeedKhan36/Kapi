@@ -130,7 +130,57 @@ export class RunAdmission {
 export type Limits = {
   rate: RateLimiter;
   runs: RunAdmission;
+  /** The most workers any single run may hold at once. See `workerCeiling`. */
+  maxWorkers: number;
+  /** The most tasks any single run may be planned into. See `taskCeiling`. */
+  maxTasks: number;
 };
+
+/**
+ * The most workers one run may hold at once.
+ *
+ * A ceiling, not a default. `maxConcurrency` arrives on every HTTP request -
+ * the schema fills it in when the caller omits it - so reading this variable
+ * as a fallback meant it never applied to anything the dashboard started, and
+ * a deployment sized for one worker handed out eight to whoever typed eight.
+ * Sandboxes bill per second, so the deployment gets the last word over the
+ * caller.
+ */
+export function workerCeiling(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number(env.MAX_CONCURRENT_WORKERS ?? 4);
+  // A malformed value must not read as "no limit". NaN loses every comparison,
+  // so `inFlight.size >= maxConcurrency` would never be true and the scheduler
+  // would launch the entire graph at once.
+  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 4;
+}
+
+/**
+ * The most tasks one run may be planned into.
+ *
+ * The sibling of `workerCeiling`, and the reason both exist: plan size decides
+ * how many sandboxes a run creates over its life, where worker concurrency
+ * only decides how many exist at any one moment. A twelve-task plan run one
+ * worker at a time still buys twelve sandboxes, plus a reviewer each.
+ *
+ * Unlike the worker ceiling this cannot be enforced by clamping a number
+ * alone: `maxTasks` reaches the planner as prompt text, and a model is free to
+ * return more tasks than it was asked for. The engine trims the plan it gets
+ * back. See `trimToTaskLimit`.
+ */
+export function taskCeiling(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = Number(env.MAX_TASKS_PER_RUN ?? 8);
+  return Number.isFinite(raw) && raw >= 1 ? Math.floor(raw) : 8;
+}
+
+/** Applies a ceiling to what a caller asked for. */
+export function clampWorkers(requested: number | undefined, ceiling: number): number {
+  return Math.min(requested ?? ceiling, ceiling);
+}
+
+/** As `clampWorkers`. Separate name so call sites read as what they bound. */
+export function clampTasks(requested: number | undefined, ceiling: number): number {
+  return Math.min(requested ?? ceiling, ceiling);
+}
 
 /**
  * Defaults sized for the free tiers kapi is built around: a Gemini key affords
@@ -147,5 +197,7 @@ export function createLimits(env: NodeJS.ProcessEnv = process.env): Limits {
       Number(env.MAX_CONCURRENT_RUNS ?? 5),
       Number(env.MAX_CONCURRENT_RUNS_PER_USER ?? 2),
     ),
+    maxWorkers: workerCeiling(env),
+    maxTasks: taskCeiling(env),
   };
 }

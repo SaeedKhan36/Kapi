@@ -4,7 +4,7 @@ import { createCodingEngine, type CodingEngine } from "@kapi/agent-engine";
 import { decideRecovery, planFromSandbox } from "@kapi/agent-runtime";
 import { createLLM, type RoutedLLM } from "@kapi/llm";
 import type { AgentMessage, PlannedTask, RecoveryDecision, TaskGraph } from "@kapi/protocol";
-import { detach, remapDependencies, workerId } from "@kapi/protocol";
+import { detach, remapDependencies, trimToTaskLimit, workerId } from "@kapi/protocol";
 import {
   cloneRepo, createRemoteBranch, createSandboxProvider, integrationBranch, isEmptyRepo,
   mergeIntoIntegration, seedEmptyRepo, taskBranch, type ProviderName, type SandboxProvider,
@@ -14,6 +14,7 @@ import {
   type AuthorizationAction, type RepoAccess,
 } from "@kapi/identity";
 import { renderContract } from "./contract.ts";
+import { clampTasks, clampWorkers, taskCeiling, workerCeiling } from "./limits.ts";
 import { runReview } from "./review-runner.ts";
 import { runWorkerTask, type WorkerOutcome } from "./worker-runner.ts";
 import type { Store } from "./store.ts";
@@ -153,7 +154,10 @@ export class RunEngine {
     const runId = randomUUID().slice(0, 8);
     const baseBranch = req.baseBranch ?? "main";
     const provider = (this.opts.createProvider ?? createSandboxProvider)(req.providerName);
-    const maxConcurrency = req.maxConcurrency ?? Number(process.env.MAX_CONCURRENT_WORKERS ?? 4);
+    // Clamped, not defaulted: MAX_CONCURRENT_WORKERS is what this deployment is
+    // willing to pay for, so a caller may ask for fewer workers than it allows
+    // and never for more.
+    const maxConcurrency = clampWorkers(req.maxConcurrency, workerCeiling());
     const idleTtlSeconds = Number(process.env.SANDBOX_IDLE_TTL_SECONDS ?? 900);
 
     await this.store.createRun({
@@ -246,6 +250,7 @@ export class RunEngine {
     }
 
     const graph = await this.opts.planOverride!(req);
+    await this.#applyTaskCeiling(runId, graph, master);
     await this.store.savePlan(runId, graph);
     await master.send("broadcast", "PLAN_READY", `planned ${graph.tasks.length} task(s)`, {
       dependsOn: graph.tasks.map((t) => t.id),
@@ -382,6 +387,30 @@ export class RunEngine {
     }
   }
 
+  /**
+   * Enforces MAX_TASKS_PER_RUN on a plan, in place.
+   *
+   * `maxTasks` only reaches the planner as a sentence in a prompt, so it is a
+   * request, not a limit - a model that returns eleven tasks against a ceiling
+   * of eight would otherwise buy eleven sandboxes. Trimming is announced
+   * rather than silent: the goal was planned for in full, and whoever reads
+   * the run should see which parts of it are not being attempted.
+   */
+  async #applyTaskCeiling(runId: string, graph: TaskGraph, master: AgentChannel) {
+    const ceiling = taskCeiling();
+    const { kept, dropped } = trimToTaskLimit(graph.tasks, ceiling);
+    if (dropped.length === 0) return;
+
+    graph.tasks = kept;
+    const names = dropped.map((t) => t.id).join(", ");
+    await master.send("broadcast", "PLAN_REVISED",
+      `plan trimmed to ${kept.length} task(s) by this deployment's limit of ${ceiling}; ` +
+      `not attempted: ${names}`,
+      { dependsOn: kept.map((t) => t.id) },
+    );
+    await this.store.saveArtifact(runId, "plan-trimmed", { ceiling, dropped });
+  }
+
   /** Phase 1: the master reads the repo read-only and produces a validated DAG. */
   async #plan(
     runId: string, req: RunRequest, provider: SandboxProvider, llm: RoutedLLM,
@@ -403,8 +432,11 @@ export class RunEngine {
       await this.#prepareRepo(runId, req, provider, box.id, baseBranch);
 
       const { graph, digest, attempts } = await planFromSandbox(
-        llm, provider, box.id, req.goal, { cwd: "repo", maxTasks: req.maxTasks },
+        llm, provider, box.id, req.goal,
+        { cwd: "repo", maxTasks: clampTasks(req.maxTasks, taskCeiling()) },
       );
+
+      await this.#applyTaskCeiling(runId, graph, master);
 
       await this.store.savePlan(runId, graph);
       await this.store.saveArtifact(runId, "plan", graph);

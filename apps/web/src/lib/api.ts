@@ -51,6 +51,12 @@ export type Health = {
   pushEnabled: boolean;
   auth: "clerk" | "workos" | "none";
   githubApp: boolean;
+  limits?: {
+    /** Workers one run may hold at once. The engine clamps anything above it. */
+    maxWorkers: number;
+    /** Tasks one run may be planned into. Plans longer than this are trimmed. */
+    maxTasks: number;
+  };
 };
 
 export type Me = {

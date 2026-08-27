@@ -281,11 +281,19 @@ Built in, not bolted on:
   tokens in one early run.
 - **Provider failover.** Gemini → Groq → Cerebras behind one interface.
 - **Sandbox idle-TTL**, so a leaked Daytona sandbox cannot quietly burn credit.
+- **A ceiling on workers per run** (`MAX_CONCURRENT_WORKERS`, default 4) and on
+  tasks per run (`MAX_TASKS_PER_RUN`, default 8). A request may ask for fewer;
+  anything larger is clamped down, so the deployment gets the last word over
+  the caller. The task ceiling is also enforced on the plan that comes back —
+  `maxTasks` reaches the planner as prompt text, and a model that returns
+  eleven tasks against a ceiling of eight would otherwise buy eleven sandboxes.
+  An oversized plan is cut to a dependency-closed prefix, so what remains never
+  points at a task that was dropped, and the run records which ones those are.
 - **A ceiling on live sandboxes** (`MAX_CONCURRENT_SANDBOXES`, default 12).
-  `MAX_CONCURRENT_WORKERS` bounds one run, which is the wrong unit for money —
-  ten runs of four workers is forty billable sandboxes and no single run has
-  misbehaved. Enforced by wrapping the provider, so it covers the planner, the
-  workers and the reviewers without four call sites having to remember.
+  Workers-per-run is the wrong unit for money — ten runs of four workers is
+  forty billable sandboxes and no single run has misbehaved. Enforced by
+  wrapping the provider, so it covers the planner, the workers and the
+  reviewers without four call sites having to remember.
 - **Limits on what one caller may ask for** — `MAX_RUNS_PER_HOUR` as a token
   bucket, plus `MAX_CONCURRENT_RUNS` and `MAX_CONCURRENT_RUNS_PER_USER`. A
   refusal is a `429` carrying `Retry-After`. Without these, one caller can

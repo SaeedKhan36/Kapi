@@ -7,7 +7,10 @@
  * hundred queued runs starve everyone else and burn a daily LLM quota on
  * planning before a sandbox is ever created.
  */
-import { RateLimiter, RunAdmission } from "../apps/orchestrator/src/limits.ts";
+import {
+  clampTasks, clampWorkers, RateLimiter, RunAdmission, taskCeiling, workerCeiling,
+} from "../apps/orchestrator/src/limits.ts";
+import { trimToTaskLimit, type PlannedTask } from "../packages/protocol/src/index.ts";
 import { LocalProvider, SandboxLimiter, SandboxLimitError, withSandboxLimit } from "../packages/sandbox/src/index.ts";
 
 let failures = 0;
@@ -170,6 +173,72 @@ const main = async () => {
     if (a2.ok) { a2.release(); a2.release(); }
     check("releasing twice does not inflate capacity", runs.activeFor("alice") === 0,
       `alice has ${runs.activeFor("alice")}`);
+  }
+
+  console.log("\n\x1b[1mworkers per run\x1b[0m\n");
+
+  {
+    const ceiling = (v?: string) => workerCeiling(v === undefined ? {} : { MAX_CONCURRENT_WORKERS: v });
+
+    check("unset falls back to four", ceiling() === 4, String(ceiling()));
+    check("a configured value is used", ceiling("1") === 1, String(ceiling("1")));
+    check("garbage does not read as unlimited", ceiling("many") === 4, String(ceiling("many")));
+    check("zero cannot disable the scheduler", ceiling("0") === 4, String(ceiling("0")));
+
+    // The regression this exists for: maxConcurrency arrives on every HTTP
+    // request, so a ceiling read as a mere default never applied to anything
+    // the dashboard started.
+    check("a caller asking for more is clamped", clampWorkers(8, 1) === 1, String(clampWorkers(8, 1)));
+    check("a caller asking for fewer keeps their number", clampWorkers(2, 4) === 2,
+      String(clampWorkers(2, 4)));
+    check("a caller who asks for nothing gets the ceiling", clampWorkers(undefined, 4) === 4,
+      String(clampWorkers(undefined, 4)));
+  }
+
+  console.log("\n\x1b[1mtasks per run\x1b[0m\n");
+
+  {
+    const ceiling = (v?: string) => taskCeiling(v === undefined ? {} : { MAX_TASKS_PER_RUN: v });
+
+    check("unset falls back to eight", ceiling() === 8, String(ceiling()));
+    check("a configured value is used", ceiling("3") === 3, String(ceiling("3")));
+    check("garbage does not read as unlimited", ceiling("lots") === 8, String(ceiling("lots")));
+    check("a caller asking for more is clamped", clampTasks(12, 4) === 4, String(clampTasks(12, 4)));
+    check("a caller who asks for nothing gets the ceiling", clampTasks(undefined, 8) === 8,
+      String(clampTasks(undefined, 8)));
+
+    // The ceiling only reaches the planner as prompt text, so the plan that
+    // comes back is trimmed too - a model is free to ignore what it was asked.
+    const task = (id: string, dependsOn: string[] = []): PlannedTask => ({
+      id, title: id, instruction: id, role: "backend", dependsOn, touches: [], acceptance: [],
+    });
+    const plan = [
+      task("api", ["db"]),        // deliberately before its own dependency
+      task("db"),
+      task("ui", ["api"]),
+      task("docs"),
+    ];
+
+    const untouched = trimToTaskLimit(plan, 8);
+    check("a plan within the ceiling is left alone", untouched.dropped.length === 0
+      && untouched.kept === plan);
+
+    const trimmed = trimToTaskLimit(plan, 2);
+    const keptIds = trimmed.kept.map((t) => t.id);
+    check("an oversized plan is cut to the ceiling", trimmed.kept.length === 2, keptIds.join(","));
+    check("...taking dependencies before dependants", keptIds.join(",") === "db,api", keptIds.join(","));
+    check("...leaving nothing pointing at a dropped task",
+      trimmed.kept.every((t) => t.dependsOn.every((d) => keptIds.includes(d))), keptIds.join(","));
+    check("...and reporting what was cut",
+      trimmed.dropped.map((t) => t.id).sort().join(",") === "docs,ui",
+      trimmed.dropped.map((t) => t.id).join(","));
+
+    // A cycle cannot be satisfied in any order; the selection must stop rather
+    // than loop looking for a task that will never become eligible.
+    const cyclic = [task("a", ["b"]), task("b", ["a"]), task("c")];
+    const fromCycle = trimToTaskLimit(cyclic, 2);
+    check("a cyclic plan terminates instead of spinning",
+      fromCycle.kept.map((t) => t.id).join(",") === "c", fromCycle.kept.map((t) => t.id).join(","));
   }
 
   console.log(failures === 0 ? "\n\x1b[32mALL PASS\x1b[0m\n" : `\n\x1b[31m${failures} FAILED\x1b[0m\n`);

@@ -27,7 +27,15 @@ function Dashboard() {
 
   useEffect(() => {
     api.listRuns().then(setRuns).catch(() => setRuns([]));
-    api.health().then(setHealth).catch(() => setHealth(null));
+    api.health()
+      .then((h) => {
+        setHealth(h);
+        // The engine clamps to these anyway. Bringing the form down to them
+        // means the numbers shown are the numbers that run.
+        if (h.limits?.maxWorkers) setConcurrency((c) => Math.min(c, h.limits!.maxWorkers));
+        if (h.limits?.maxTasks) setMaxTasks((t) => Math.min(t, h.limits!.maxTasks));
+      })
+      .catch(() => setHealth(null));
     api.me().then(setMe).catch(() => setMe(null));
   }, []);
 
@@ -50,6 +58,11 @@ function Dashboard() {
       setBusy(false);
     }
   };
+
+  // Until health answers, offer the schema's own ceilings rather than guessing
+  // low - a deployment that allows more should not look like one that does not.
+  const maxWorkers = health?.limits?.maxWorkers ?? 8;
+  const taskCeiling = health?.limits?.maxTasks ?? 12;
 
   return (
     <AppShell>
@@ -84,16 +97,20 @@ function Dashboard() {
                   <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
                 </summary>
                 <div className="grid grid-cols-2 gap-4 border-t-[1.5px] border-line p-3.5">
-                  <Field label="Max tasks" hint="plan size">
+                  <Field label="Max tasks" hint={`plan size · max ${taskCeiling}`}>
                     <Input
-                      type="number" min={1} max={12} value={maxTasks}
-                      onChange={(e) => setMaxTasks(Number(e.target.value))}
+                      type="number" min={1} max={taskCeiling} value={maxTasks}
+                      onChange={(e) =>
+                        setMaxTasks(Math.min(Math.max(1, Number(e.target.value)), taskCeiling))
+                      }
                     />
                   </Field>
-                  <Field label="Workers" hint="sandboxes at once">
+                  <Field label="Workers" hint={`sandboxes at once · max ${maxWorkers}`}>
                     <Input
-                      type="number" min={1} max={8} value={concurrency}
-                      onChange={(e) => setConcurrency(Number(e.target.value))}
+                      type="number" min={1} max={maxWorkers} value={concurrency}
+                      onChange={(e) =>
+                        setConcurrency(Math.min(Math.max(1, Number(e.target.value)), maxWorkers))
+                      }
                     />
                   </Field>
                 </div>

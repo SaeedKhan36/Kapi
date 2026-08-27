@@ -118,6 +118,46 @@ export function validateTaskGraph(graph: TaskGraph): GraphProblem[] {
   return problems;
 }
 
+/**
+ * Cuts a plan down to at most `limit` tasks, keeping a set that is closed
+ * under its own dependencies.
+ *
+ * Naively slicing the array would strand dependants on tasks that no longer
+ * exist, which the scheduler would then mark blocked one by one - a plan that
+ * fails in pieces rather than one that is honestly smaller. Tasks are taken in
+ * the order the planner produced them, but only once everything they depend on
+ * has already been taken, so nothing kept can point at anything dropped.
+ *
+ * A dependency on an id that is not in the graph counts as satisfied: it is
+ * already a `validateTaskGraph` problem, and treating it as unsatisfiable here
+ * would stall the selection instead of surfacing that.
+ */
+export function trimToTaskLimit(
+  tasks: PlannedTask[],
+  limit: number,
+): { kept: PlannedTask[]; dropped: PlannedTask[] } {
+  if (tasks.length <= limit) return { kept: tasks, dropped: [] };
+
+  const present = new Set(tasks.map((t) => t.id));
+  const kept: PlannedTask[] = [];
+  const keptIds = new Set<string>();
+  const remaining = [...tasks];
+
+  while (kept.length < limit) {
+    const i = remaining.findIndex((t) =>
+      t.dependsOn.every((d) => keptIds.has(d) || !present.has(d)),
+    );
+    // Only reachable if what is left is cyclic. Stop rather than spin; the
+    // caller gets a smaller plan and the cycle is reported separately.
+    if (i === -1) break;
+    const [next] = remaining.splice(i, 1);
+    kept.push(next);
+    keptIds.add(next.id);
+  }
+
+  return { kept, dropped: remaining };
+}
+
 /** Tasks whose dependencies are all satisfied, given a set of completed task ids. */
 export function readyTasks(graph: TaskGraph, completed: ReadonlySet<string>): PlannedTask[] {
   return graph.tasks.filter(

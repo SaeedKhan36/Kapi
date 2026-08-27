@@ -76,6 +76,10 @@ app.get("/api/health", (c) =>
       burst: limits.rate.burst,
       concurrentRuns: `${limits.runs.active}/${limits.runs.maxTotal}`,
       concurrentRunsPerUser: limits.runs.maxPerUser,
+      // Published so the dashboard can offer the numbers this deployment will
+      // actually honour, instead of knobs the engine silently clamps.
+      maxWorkers: limits.maxWorkers,
+      maxTasks: limits.maxTasks,
       sandboxes: `${sandboxes.active}/${sandboxes.max}`,
       sandboxesWaiting: sandboxes.waiting,
     },
