@@ -1,5 +1,5 @@
 import type {
-  ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, ReactNode,
+  ButtonHTMLAttributes, ComponentProps, HTMLAttributes, ReactNode,
   SelectHTMLAttributes, TextareaHTMLAttributes,
 } from "react";
 import { cn } from "~/lib/cn.ts";
@@ -97,7 +97,7 @@ const FIELD_SURFACE =
   "w-full rounded-xl border-[1.5px] border-line bg-well px-3 py-2 text-sm text-bright transition-colors " +
   "placeholder:text-dim/80 hover:bg-white focus:border-line focus:bg-white focus:outline-none focus:shadow-[3px_3px_0_#1c1917]";
 
-export const Input = ({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) => (
+export const Input = ({ className, ...props }: ComponentProps<"input">) => (
   <input className={cn(FIELD_SURFACE, "h-10", className)} {...props} />
 );
 

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Check, Lock, Search } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, ChevronDown, Lock, Search } from "lucide-react";
 import { api, ApiError, type Authorization, type Branch, type Repository } from "~/lib/api.ts";
 import { cn } from "~/lib/cn.ts";
 import { useOpenAccount } from "./auth.tsx";
@@ -34,7 +34,10 @@ export function RepoPicker({
   const [needsConnect, setNeedsConnect] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [open, setOpen] = useState(false);
   const openAccount = useOpenAccount();
+  const wrapper = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api.listRepos()
@@ -46,10 +49,34 @@ export function RepoPicker({
       });
   }, []);
 
+  // An open list covers the rest of the form, so anything that means "I am
+  // done here" - a click elsewhere, Escape - has to put it away.
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!wrapper.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (open) search.current?.focus();
+    else setFilter("");
+  }, [open]);
+
   const select = async (repo: Repository) => {
     setSelected(repo);
     setBranches(null);
     setAuthorization(null);
+    setOpen(false);
     onChange({ repoUrl: repo.cloneUrl, baseBranch: repo.defaultBranch });
 
     // Both in flight at once: neither answer depends on the other, and the
@@ -109,40 +136,77 @@ export function RepoPicker({
 
   return (
     <div className="space-y-3">
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-dim" />
-        <Input
-          className="pl-9"
-          placeholder="Search repositories…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-      </div>
+      <div ref={wrapper} className="relative">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          className={cn(
+            "flex h-10 w-full cursor-pointer items-center gap-2 rounded-xl border-[1.5px] border-line px-3 text-left text-sm",
+            "transition-colors hover:bg-white",
+            open ? "bg-white shadow-[3px_3px_0_#1c1917]" : "bg-well",
+          )}
+        >
+          {selected ? (
+            <span className="truncate text-bright">
+              <span className="text-dim">{selected.owner}/</span>
+              <span className="font-medium">{selected.name}</span>
+            </span>
+          ) : (
+            <span className="text-dim/80">Choose a repository…</span>
+          )}
+          {selected?.private && <Lock className="size-3 shrink-0 text-dim" />}
+          <ChevronDown
+            className={cn("ml-auto size-4 shrink-0 text-dim transition-transform", open && "rotate-180")}
+          />
+        </button>
 
-      <div className="max-h-56 divide-y divide-line/20 overflow-y-auto rounded-2xl border-[1.5px] border-line bg-white shadow-[3px_3px_0_#1c1917]">
-        {visible.slice(0, 100).map((repo) => {
-          const active = selected?.id === repo.id;
-          return (
-            <button
-              key={repo.id}
-              type="button"
-              onClick={() => void select(repo)}
-              className={cn(
-                "flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors",
-                active ? "bg-[#bae6fd] text-bright" : "text-muted hover:bg-[#fff8e7] hover:text-bright",
-              )}
+        {open && (
+          <div className="absolute left-0 right-0 top-full z-20 mt-2 space-y-2 rounded-2xl border-[1.5px] border-line bg-white p-2 shadow-[4px_4px_0_#1c1917]">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-dim" />
+              <Input
+                ref={search}
+                className="pl-9"
+                placeholder="Search repositories…"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+              />
+            </div>
+
+            <div
+              role="listbox"
+              className="max-h-56 divide-y divide-line/20 overflow-y-auto rounded-xl border-[1.5px] border-line"
             >
-              <span className="truncate">
-                <span className="text-dim">{repo.owner}/</span>
-                <span className="font-medium">{repo.name}</span>
-              </span>
-              {repo.private && <Lock className="size-3 shrink-0 text-dim" />}
-              {active && <Check className="ml-auto size-3.5 shrink-0 text-accent" />}
-            </button>
-          );
-        })}
-        {visible.length === 0 && (
-          <p className="px-3 py-6 text-center text-sm text-dim">No repositories match “{filter}”.</p>
+              {visible.slice(0, 100).map((repo) => {
+                const active = selected?.id === repo.id;
+                return (
+                  <button
+                    key={repo.id}
+                    type="button"
+                    role="option"
+                    aria-selected={active}
+                    onClick={() => void select(repo)}
+                    className={cn(
+                      "flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors",
+                      active ? "bg-[#bae6fd] text-bright" : "text-muted hover:bg-[#fff8e7] hover:text-bright",
+                    )}
+                  >
+                    <span className="truncate">
+                      <span className="text-dim">{repo.owner}/</span>
+                      <span className="font-medium">{repo.name}</span>
+                    </span>
+                    {repo.private && <Lock className="size-3 shrink-0 text-dim" />}
+                    {active && <Check className="ml-auto size-3.5 shrink-0 text-accent" />}
+                  </button>
+                );
+              })}
+              {visible.length === 0 && (
+                <p className="px-3 py-6 text-center text-sm text-dim">No repositories match “{filter}”.</p>
+              )}
+            </div>
+          </div>
         )}
       </div>
 
