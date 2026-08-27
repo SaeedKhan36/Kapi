@@ -18,21 +18,23 @@ export function AppShell({ children, back }: {
 }) {
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-30 border-b border-line/40 bg-ink/80 backdrop-blur-xl">
+      <header className="sticky top-0 z-30 border-b-[1.5px] border-line/20 bg-[#f7f4ec]/85 backdrop-blur-xl">
         <div className="shell flex h-16 items-center gap-4">
           <Link to="/" aria-label="kapi home"><Logo /></Link>
 
-          <span aria-hidden className="h-5 w-px bg-line/60" />
+          <span aria-hidden className="h-5 w-px bg-line/25" />
 
           {back ? (
             <Link
               to={back.to}
-              className="flex items-center gap-1.5 text-sm text-muted transition-colors hover:text-bright"
+              className="flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm font-medium text-muted transition-colors hover:bg-raised hover:text-bright"
             >
               <ArrowLeft className="size-3.5" /> {back.label}
             </Link>
           ) : (
-            <span className="text-sm text-muted">Dashboard</span>
+            <span className="rounded-full border-[1.5px] border-line bg-[#e9d5ff] px-2.5 py-0.5 text-xs font-semibold">
+              Dashboard
+            </span>
           )}
 
           <div className="ml-auto flex items-center gap-4">

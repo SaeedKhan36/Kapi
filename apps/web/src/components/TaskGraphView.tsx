@@ -34,10 +34,14 @@ function toLevels(tasks: Task[]): Task[][] {
 }
 
 const BORDER: Record<string, string> = {
-  running: "border-accent/50",
-  assigned: "border-accent/40",
-  failed: "border-bad/50",
-  blocked: "border-warn/50",
+  running: "bg-[#e0f2fe]",
+  assigned: "bg-[#e0f2fe]",
+  planning: "bg-[#ede9fe]",
+  failed: "bg-[#fecaca]",
+  blocked: "bg-[#fef08a]",
+  completed: "bg-[#dcfce7]",
+  review: "bg-[#dcfce7]",
+  merged: "bg-[#dcfce7]",
 };
 
 export function TaskGraphView({ tasks }: { tasks: Task[] }) {
@@ -57,7 +61,7 @@ export function TaskGraphView({ tasks }: { tasks: Task[] }) {
       {levels.map((level, i) => (
         <div key={i}>
           <div className="mb-2 flex items-center gap-2.5">
-            <span className="grid size-5 place-items-center rounded-md border border-line/60 bg-raised/50 font-mono text-[10px] text-muted">
+            <span className="grid size-5 place-items-center rounded-full border-[1.5px] border-line bg-[#bae6fd] font-mono text-[10px] font-semibold text-bright">
               {i + 1}
             </span>
             <span className="text-[11px] uppercase tracking-widest text-dim">
@@ -72,7 +76,7 @@ export function TaskGraphView({ tasks }: { tasks: Task[] }) {
                 key={task.taskId}
                 className={cn(
                   "p-3.5 transition-colors",
-                  BORDER[task.status] ?? "border-line/60",
+                  BORDER[task.status] ?? "bg-white",
                   task.status === "pending" && "opacity-70",
                 )}
               >

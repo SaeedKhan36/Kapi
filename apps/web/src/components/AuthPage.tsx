@@ -23,17 +23,17 @@ export function AuthPage({ mode }: { mode: "sign-in" | "sign-up" }) {
 
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
-      <aside className="hidden flex-col justify-between border-r border-line/40 bg-surface/30 p-10 lg:flex">
+      <aside className="hidden flex-col justify-between border-r-[1.5px] border-line bg-[#fff8e7] p-10 lg:flex">
         <Link to="/" aria-label="kapi home"><Logo /></Link>
 
         <div>
-          <h1 className="max-w-sm text-3xl font-semibold leading-tight tracking-tight">
+          <h1 className="font-display max-w-sm text-3xl font-bold leading-tight tracking-tight">
             Delegate the whole feature, not the next line.
           </h1>
           <ul className="mt-8 space-y-4">
             {POINTS.map((point) => (
               <li key={point.text} className="flex items-center gap-3 text-sm text-muted">
-                <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-accent/25 bg-accent/10 text-accent">
+                <span className="grid size-8 shrink-0 place-items-center rounded-xl border-[1.5px] border-line bg-[#bae6fd] text-bright shadow-[2px_2px_0_#1c1917]">
                   <point.icon className="size-4" />
                 </span>
                 {point.text}

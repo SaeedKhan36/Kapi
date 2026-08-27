@@ -1,29 +1,25 @@
 import { Link } from "@tanstack/react-router";
 import {
-  Boxes, ChevronDown, Cpu, GitBranch, Layers, MessageSquare, Network,
-  Radio, ShieldCheck, Workflow,
+  Boxes, Check, GitBranch, Layers, Play, ShieldCheck, Sparkles, Workflow,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import { buttonClass, Card, RoleChip } from "../ui.tsx";
+import { useAuth } from "@clerk/react";
+import { authEnabled } from "~/lib/auth.ts";
 import { GithubMark, Logo } from "../Logo.tsx";
-import { HeaderAuthActions } from "../auth.tsx";
-import { RunPreview } from "./RunPreview.tsx";
-import { Architecture } from "./Architecture.tsx";
 
-const REPO = "https://github.com/SaeedKhan36/kapi";
+const REPO = "https://github.com/SaeedKhan36/Kapi";
 
 const NAV = [
   { href: "#how", label: "How it works" },
   { href: "#capabilities", label: "Capabilities" },
-  { href: "#architecture", label: "Architecture" },
-  { href: "#pricing", label: "What it costs" },
+  { href: "#start", label: "Get started" },
 ] as const;
 
 // --------------------------------------------------------------------- chrome
 
 export function MarketingNav() {
   return (
-    <header className="sticky top-0 z-40 border-b border-line/40 bg-ink/80 backdrop-blur-xl">
+    <header className="sticky top-0 z-40 border-b border-line/15 bg-[#f7f4ec]/80 backdrop-blur-xl">
       <div className="shell flex h-16 items-center gap-8">
         <Link to="/" aria-label="kapi home"><Logo /></Link>
 
@@ -32,14 +28,14 @@ export function MarketingNav() {
             <a
               key={item.href}
               href={item.href}
-              className="text-sm text-muted transition-colors hover:text-bright"
+              className="text-sm font-medium text-muted transition-colors hover:text-bright"
             >
               {item.label}
             </a>
           ))}
         </nav>
 
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-2">
           <a
             href={REPO}
             target="_blank"
@@ -49,16 +45,37 @@ export function MarketingNav() {
           >
             <GithubMark className="size-[18px]" />
           </a>
-          <HeaderAuthActions />
+          <LandingAuthActions />
         </div>
       </div>
     </header>
   );
 }
 
+function LandingAuthActions() {
+  if (!authEnabled) {
+    return <Link to="/app" className="landing-btn-primary !px-4 !py-2 text-sm">Open dashboard</Link>;
+  }
+  return <ClerkLandingActions />;
+}
+
+function ClerkLandingActions() {
+  const { isLoaded, isSignedIn } = useAuth();
+  if (!isLoaded) return <div className="h-9 w-28 animate-pulse rounded-full bg-black/5" />;
+  if (isSignedIn) {
+    return <Link to="/app" className="landing-btn-primary !px-4 !py-2 text-sm">Open dashboard</Link>;
+  }
+  return (
+    <div className="flex items-center gap-1">
+      <Link to="/sign-in" className="landing-btn-ghost">Sign in</Link>
+      <Link to="/sign-up" className="landing-btn-primary !px-4 !py-2 text-sm">Get started</Link>
+    </div>
+  );
+}
+
 export function MarketingFooter() {
   return (
-    <footer className="border-t border-line/40 py-10">
+    <footer className="border-t border-line/15 py-10">
       <div className="shell flex flex-col items-center justify-between gap-4 sm:flex-row">
         <Logo />
         <p className="text-xs text-dim">
@@ -81,59 +98,85 @@ export function MarketingFooter() {
 
 export function Hero() {
   return (
-    <section className="shell grid items-center gap-14 py-16 lg:grid-cols-[1.15fr_1fr] lg:py-24">
+    <section className="shell grid items-center gap-12 py-14 lg:grid-cols-[1.05fr_1fr] lg:gap-10 lg:py-20">
       <div>
-        <span className="inline-flex items-center gap-2 rounded-full border border-line/60 bg-surface/60 px-3 py-1 text-xs text-muted">
-          <span className="size-1.5 rounded-full bg-ok" />
-          Open source · runs entirely on free tiers
+        <span className="inline-flex items-center gap-2 rounded-full border border-line bg-[#dbeafe] px-3 py-1 text-xs font-semibold text-bright">
+          <Sparkles className="size-3.5" />
+          New: multi-agent runs on your repos
         </span>
 
-        <h1 className="mt-6 text-balance text-4xl font-semibold leading-[1.08] tracking-tight sm:text-5xl lg:text-[3rem]">
-          Your AI engineering team,<br />
-          <span className="text-gradient">working in parallel.</span>
+        <p className="font-display mt-7 text-5xl font-bold leading-[0.95] tracking-tight sm:text-6xl lg:text-[4.25rem]">
+          kapi
+        </p>
+
+        <h1 className="font-display mt-3 max-w-xl text-balance text-3xl font-semibold leading-[1.12] tracking-tight sm:text-4xl">
+          Your AI engineering team, working in parallel.
         </h1>
 
-        <p className="mt-5 max-w-lg text-lg leading-relaxed text-muted">
-          Describe a feature. A master agent turns it into a task graph, then a
-          specialist worker builds each piece — its own sandbox, its own git
-          branch, all coordinating as they go.
+        <p className="mt-5 max-w-md text-[1.05rem] leading-relaxed text-muted">
+          One goal in. A master plans the graph. Workers build each piece in
+          their own sandbox, on their own branch.
         </p>
 
         <div className="mt-8 flex flex-wrap items-center gap-3">
-          <Link to="/app" className={buttonClass("primary", "lg")}>
+          <Link to="/app" className="landing-btn-primary">
             Start a run
           </Link>
-          <a href="#how" className={buttonClass("secondary", "lg")}>
+          <a href="#how" className="landing-btn-secondary">
+            <Play className="size-3.5 fill-current" />
             See how it works
           </a>
         </div>
-
-        <p className="mt-5 text-xs text-dim">
-          No credit card · your repository stays yours · one API key to start
-        </p>
       </div>
 
-      <RunPreview />
+      <HeroCollage />
     </section>
   );
 }
 
-export function StatStrip() {
-  const stats = [
-    { value: "7", label: "specialist roles" },
-    { value: "1", label: "sandbox per worker" },
-    { value: "∞", label: "parallel waves" },
-    { value: "$0", label: "to run it" },
-  ];
+function HeroCollage() {
   return (
-    <div className="shell">
-      <div className="reveal grid grid-cols-2 gap-px overflow-hidden rounded-[var(--radius-card)] border border-line/50 bg-line/40 sm:grid-cols-4">
-        {stats.map((stat) => (
-          <div key={stat.label} className="bg-ink/60 px-5 py-6 text-center">
-            <p className="text-3xl font-semibold tracking-tight text-bright">{stat.value}</p>
-            <p className="mt-1 text-xs uppercase tracking-wider text-dim">{stat.label}</p>
-          </div>
-        ))}
+    <div className="relative mx-auto h-[22rem] w-full max-w-md sm:h-[26rem] lg:max-w-none">
+      <div className="landing-card landing-float-a absolute left-0 top-6 z-10 w-[58%] rotate-[-2deg] bg-[#fef08a] p-4 sm:left-2 sm:top-8">
+        <p className="text-xs font-semibold uppercase tracking-wide text-bright/70">Task list</p>
+        <ul className="mt-3 space-y-2 text-sm font-medium">
+          {["Plan the API contract", "Ship the frontend", "Add database migration", "Open the PR"].map((item, i) => (
+            <li key={item} className="flex items-center gap-2">
+              <span className={`grid size-4 place-items-center rounded-full border border-line ${i < 2 ? "bg-ok" : "bg-white"}`}>
+                {i < 2 && <Check className="size-2.5" strokeWidth={3} />}
+              </span>
+              {item}
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="landing-card landing-float-b absolute right-0 top-0 z-20 w-[48%] rotate-[3deg] bg-[#bae6fd] p-4 sm:right-4">
+        <p className="text-xs font-semibold uppercase tracking-wide text-bright/70">Workers</p>
+        <div className="mt-3 space-y-2">
+          {[
+            { role: "frontend", status: "running" },
+            { role: "backend", status: "ready" },
+            { role: "database", status: "waiting" },
+          ].map((row) => (
+            <div key={row.role} className="flex items-center justify-between rounded-xl border border-line/40 bg-white/70 px-2.5 py-1.5 text-xs font-medium">
+              <span>{row.role}</span>
+              <span className="text-dim">{row.status}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="landing-card landing-float-c absolute bottom-2 left-[18%] z-30 w-[72%] rotate-[1deg] bg-white p-4 sm:bottom-4 sm:left-[22%]">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-sm font-semibold">Run · add /health endpoint</p>
+          <span className="rounded-full border border-line bg-[#dcfce7] px-2 py-0.5 text-[10px] font-semibold uppercase">Live</span>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          <span className="rounded-full border border-line bg-[#fef08a] px-2 py-0.5 text-[11px] font-medium">planning</span>
+          <span className="rounded-full border border-line bg-[#bae6fd] px-2 py-0.5 text-[11px] font-medium">3 workers</span>
+          <span className="rounded-full border border-line bg-[#e9d5ff] px-2 py-0.5 text-[11px] font-medium">daytona</span>
+        </div>
       </div>
     </div>
   );
@@ -143,209 +186,150 @@ export function StatStrip() {
 
 const STEPS = [
   {
+    n: "01",
+    title: "Plan the graph",
+    body: "The master clones your repo read-only and turns the goal into tasks with real dependencies.",
+    tone: "bg-white",
     icon: Workflow,
-    title: "Plan",
-    body: "The master clones your repo read-only and emits a task graph: a shared contract plus tasks with dependencies.",
   },
   {
+    n: "02",
+    title: "Run in parallel",
+    body: "Every ready task gets its own sandbox and branch. Workers talk as interfaces land.",
+    tone: "bg-[#fef08a]",
     icon: Layers,
-    title: "Schedule",
-    body: "The orchestrator walks the graph and starts every task whose dependencies are finished — in waves, not a queue.",
   },
   {
-    icon: Cpu,
-    title: "Implement",
-    body: "Each worker gets a fresh sandbox and a clone on its own branch, and talks to the others as interfaces land.",
-  },
-  {
+    n: "03",
+    title: "Ship as a PR",
+    body: "Commits land on worker branches, merge into an integration branch, and open a pull request.",
+    tone: "bg-[#bae6fd]",
     icon: GitBranch,
-    title: "Report",
-    body: "Commits land on worker branches and are pushed to your repository. You review and merge, as always.",
   },
 ] as const;
 
 export function HowItWorks() {
   return (
-    <Band id="how" eyebrow="How a run works" title="One goal in, four stages out">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <section id="how" className="shell scroll-mt-20 py-16 lg:py-20">
+      <div className="reveal mx-auto max-w-2xl text-center">
+        <h2 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">
+          Not just another coding bot
+        </h2>
+        <p className="mt-3 text-muted">
+          kapi is a small team: a planner, parallel workers, and a review loop — all on free tiers.
+        </p>
+      </div>
+
+      <div className="mt-10 grid gap-4 md:grid-cols-3">
         {STEPS.map((step, i) => (
-          <Card key={step.title} className="reveal p-5" style={{ transitionDelay: `${i * 60}ms` }}>
-            <div className="flex items-center justify-between">
-              <span className="grid size-9 place-items-center rounded-lg border border-accent/25 bg-accent/10 text-accent">
-                <step.icon className="size-4" />
+          <article
+            key={step.title}
+            className={`landing-card reveal ${step.tone} p-5`}
+            style={{ transitionDelay: `${i * 70}ms` }}
+          >
+            <div className="flex items-start justify-between">
+              <span className="grid size-9 place-items-center rounded-full border border-line bg-[#dbeafe] text-xs font-bold">
+                {step.n}
               </span>
-              <span className="font-mono text-xs text-dim">0{i + 1}</span>
+              <step.icon className="size-5 text-bright/70" />
             </div>
-            <h3 className="mt-4 font-semibold text-bright">{step.title}</h3>
-            <p className="mt-1.5 text-sm leading-relaxed text-muted">{step.body}</p>
-          </Card>
+            <h3 className="font-display mt-5 text-xl font-semibold">{step.title}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-muted">{step.body}</p>
+          </article>
         ))}
       </div>
-    </Band>
+    </section>
   );
 }
 
 // --------------------------------------------------------------- capabilities
 
-const FEATURES: ReadonlyArray<{
-  icon: typeof Network; title: string; body: string; span: string;
-}> = [
-  {
-    icon: Network,
-    title: "A dependency graph, not a to-do list",
-    body: "Tasks declare what they depend on, so the scheduler knows exactly what can run at the same time.",
-    span: "lg:col-span-3",
-  },
+const FEATURES = [
   {
     icon: Boxes,
     title: "Real isolation",
-    body: "Local, Docker, or a cloud sandbox — one per worker, torn down when it goes idle.",
-    span: "lg:col-span-3",
-  },
-  {
-    icon: MessageSquare,
-    title: "Agents that talk",
-    body: "Typed messages over a bus: SCHEMA_READY, API_READY, CHANGE_REQUESTED.",
-    span: "lg:col-span-2",
-  },
-  {
-    icon: GitBranch,
-    title: "Git-native output",
-    body: "Ordinary commits on ordinary branches. Nothing to import, nothing to trust blindly.",
-    span: "lg:col-span-2",
+    body: "Each worker gets a fresh Daytona sandbox and its own git branch — never shared state.",
   },
   {
     icon: ShieldCheck,
     title: "Scoped credentials",
-    body: "A sandbox gets a token for one repository, for an hour. Never your own.",
-    span: "lg:col-span-2",
+    body: "Sandboxes receive a one-hour token for one repository. Your own login never enters the sandbox.",
   },
   {
-    icon: Radio,
-    title: "Watch it happen",
-    body: "The dashboard streams the same events the audit log stores — no polling, no refresh.",
-    span: "lg:col-span-6",
+    icon: Workflow,
+    title: "A dependency graph",
+    body: "Tasks declare what they need. The scheduler starts every ready wave at once, not a queue.",
   },
-];
+] as const;
 
 export function Capabilities() {
   return (
-    <Band
-      id="capabilities"
-      eyebrow="Capabilities"
-      title="Built like infrastructure, not a demo"
-    >
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-6">
+    <section id="capabilities" className="shell scroll-mt-20 py-8 lg:py-12">
+      <div className="grid items-center gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:gap-12">
+        <div className="reveal">
+          <h2 className="font-display text-3xl font-bold tracking-tight sm:text-[2.35rem]">
+            Designed for the way an engineering team actually works
+          </h2>
+          <p className="mt-4 text-[15px] leading-relaxed text-muted">
+            Sign in with GitHub, pick a repo you own, install the kapi app once,
+            and watch the plan come back while workers build in parallel.
+          </p>
+          <ul className="mt-6 space-y-3">
+            {["Infinite parallel waves", "Git-native branches and PRs", "Works on free Gemini + Neon + Daytona"].map((item) => (
+              <li key={item} className="flex items-center gap-3 text-sm font-medium">
+                <span className="grid size-6 place-items-center rounded-full border border-line bg-[#bae6fd]">
+                  <Check className="size-3.5" strokeWidth={3} />
+                </span>
+                {item}
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="reveal landing-card bg-[#fff8e7] p-5 sm:p-6">
+          <span className="inline-flex rounded-full border border-line bg-[#dcfce7] px-2.5 py-1 text-[11px] font-semibold">
+            Popular with solo builders
+          </span>
+          <h3 className="font-display mt-4 text-2xl font-bold tracking-tight">
+            From messy goal to polished PR
+          </h3>
+          <p className="mt-2 text-sm leading-relaxed text-muted">
+            Brainstorm Monday, let workers ship branches Tuesday, walk into review with a clean pull request.
+          </p>
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            {[
+              { title: "Plan", tone: "bg-[#fef08a]" },
+              { title: "Frontend", tone: "bg-[#bae6fd]" },
+              { title: "Backend", tone: "bg-white" },
+              { title: "Integration PR", tone: "bg-[#dcfce7]" },
+            ].map((card) => (
+              <div key={card.title} className={`rounded-2xl border border-line ${card.tone} p-3`}>
+                <p className="text-sm font-semibold">{card.title}</p>
+                <div className="mt-3 space-y-1.5">
+                  <div className="h-1.5 w-full rounded-full bg-black/10" />
+                  <div className="h-1.5 w-4/5 rounded-full bg-black/10" />
+                  <div className="h-1.5 w-2/3 rounded-full bg-black/10" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-10 grid gap-4 md:grid-cols-3">
         {FEATURES.map((feature, i) => (
-          <Card
+          <article
             key={feature.title}
-            className={`reveal p-5 transition-colors hover:border-accent/40 ${feature.span}`}
-            style={{ transitionDelay: `${i * 50}ms` }}
+            className="landing-card reveal bg-white p-5"
+            style={{ transitionDelay: `${i * 60}ms` }}
           >
-            <feature.icon className="size-5 text-accent" />
-            <h3 className="mt-4 font-semibold text-bright">{feature.title}</h3>
-            <p className="mt-1.5 max-w-md text-sm leading-relaxed text-muted">{feature.body}</p>
-          </Card>
+            <feature.icon className="size-5" />
+            <h3 className="font-display mt-4 text-lg font-semibold">{feature.title}</h3>
+            <p className="mt-2 text-sm leading-relaxed text-muted">{feature.body}</p>
+          </article>
         ))}
       </div>
-    </Band>
-  );
-}
-
-export function ArchitectureSection() {
-  return (
-    <Band
-      id="architecture"
-      eyebrow="Architecture"
-      title="Three moving parts"
-      lead="Every capability sits behind an interface with more than one implementation, so no vendor is load-bearing."
-    >
-      <div className="reveal"><Architecture /></div>
-    </Band>
-  );
-}
-
-// --------------------------------------------------------------------- pricing
-
-const KEYS = [
-  { name: "Gemini", need: "required", what: "The model the agents think with", where: "aistudio.google.com" },
-  { name: "GitHub", need: "to push", what: "A fine-grained token, or the kapi app", where: "github.com" },
-  { name: "Clerk", need: "to share", what: "Sign-in, if more than you will use it", where: "clerk.com" },
-  { name: "Neon", need: "optional", what: "Postgres — otherwise it runs embedded", where: "neon.tech" },
-  { name: "Daytona", need: "optional", what: "Cloud sandboxes instead of local ones", where: "daytona.io" },
-  { name: "Upstash", need: "optional", what: "Redis bus for multiple instances", where: "upstash.com" },
-] as const;
-
-export function Pricing() {
-  return (
-    <Band
-      id="pricing"
-      eyebrow="What it costs"
-      title="Nothing, and it stays that way"
-      lead="kapi is designed around free tiers. One key gets you running; everything else is opt-in."
-    >
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {KEYS.map((key, i) => (
-          <Card key={key.name} className="reveal p-4" style={{ transitionDelay: `${i * 40}ms` }}>
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="font-medium text-bright">{key.name}</h3>
-              <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wider ${
-                key.need === "required"
-                  ? "border-accent/30 bg-accent/10 text-accent"
-                  : "border-line/60 text-dim"
-              }`}>
-                {key.need}
-              </span>
-            </div>
-            <p className="mt-1.5 text-sm text-muted">{key.what}</p>
-            <p className="mt-2 font-mono text-[11px] text-dim">{key.where}</p>
-          </Card>
-        ))}
-      </div>
-    </Band>
-  );
-}
-
-// ------------------------------------------------------------------------ faq
-
-const FAQ = [
-  {
-    q: "Does it push straight to my main branch?",
-    a: "No. Every worker commits on its own branch, named after the run and the task. Merging is yours to do, in the normal way.",
-  },
-  {
-    q: "What can an agent actually reach?",
-    a: "One sandbox, one clone, and a token scoped to that single repository for an hour. Your own GitHub credential never leaves the orchestrator.",
-  },
-  {
-    q: "What happens when a task fails?",
-    a: "It goes back to the master, which can revise the plan, re-dispatch the work, or redistribute it to another role. Attempts are visible on the task.",
-  },
-  {
-    q: "Do I need a database?",
-    a: "Not to start. With no DATABASE_URL, kapi runs embedded Postgres in .kapi/db and creates its tables on first run.",
-  },
-  {
-    q: "Can I run it without signing in?",
-    a: "Yes. With no Clerk keys configured kapi stays single-operator: no login screen, one credential, exactly as the CLI works.",
-  },
-] as const;
-
-export function Faq() {
-  return (
-    <Band eyebrow="Questions" title="Before you start">
-      <div className="mx-auto max-w-3xl divide-y divide-line/40 overflow-hidden rounded-[var(--radius-card)] border border-line/50 bg-surface/40">
-        {FAQ.map((item) => (
-          <details key={item.q} className="group px-5">
-            <summary className="flex cursor-pointer items-center justify-between gap-4 py-4 text-left text-sm font-medium text-bright">
-              {item.q}
-              <ChevronDown className="size-4 shrink-0 text-dim transition-transform duration-200 group-open:rotate-180" />
-            </summary>
-            <p className="pb-4 pr-8 text-sm leading-relaxed text-muted">{item.a}</p>
-          </details>
-        ))}
-      </div>
-    </Band>
+    </section>
   );
 }
 
@@ -353,47 +337,44 @@ export function Faq() {
 
 export function CallToAction() {
   return (
-    <section className="shell py-20">
-      <div className="reveal relative overflow-hidden rounded-2xl border border-line/60 bg-surface/50 px-6 py-14 text-center">
+    <section id="start" className="shell scroll-mt-20 py-16 lg:py-20">
+      <div className="reveal relative overflow-hidden rounded-[2rem] border border-line bg-[#c7d2fe] px-6 py-14 text-center shadow-[6px_6px_0_#1c1917] sm:px-10">
         <div
           aria-hidden
-          className="absolute inset-x-0 -top-24 h-48 bg-gradient-to-b from-accent/20 to-transparent blur-2xl"
+          className="pointer-events-none absolute -right-10 -top-10 size-40 rounded-full bg-white/30 blur-2xl"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -bottom-16 -left-8 size-48 rounded-full bg-[#fef08a]/50 blur-2xl"
         />
         <div className="relative">
-          <div className="mb-6 flex flex-wrap justify-center gap-1.5">
-            {["frontend", "backend", "database", "testing"].map((role) => (
-              <RoleChip key={role} role={role} />
-            ))}
-          </div>
-          <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-            Give the team its first goal
+          <h2 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">
+            Ready to give the team a goal?
           </h2>
-          <p className="mx-auto mt-3 max-w-md text-muted">
-            Sign in, point kapi at a repository, and watch the plan come back.
+          <p className="mx-auto mt-3 max-w-lg text-muted">
+            Sign in, connect GitHub, install the kapi app on a repo, and start a run.
           </p>
-          <Link to="/app" className={`${buttonClass("primary", "lg")} mt-8`}>
-            Open the dashboard
-          </Link>
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <Link to="/app" className="landing-btn-primary">
+              Open the dashboard
+            </Link>
+            <a href={REPO} target="_blank" rel="noreferrer" className="landing-btn-secondary">
+              <GithubMark className="size-4" />
+              View source
+            </a>
+          </div>
         </div>
       </div>
     </section>
   );
 }
 
-// --------------------------------------------------------------------- layout
+/** Kept for routes that still import older section names during transition. */
+export function StatStrip() { return null; }
+export function ArchitectureSection() { return null; }
+export function Pricing() { return null; }
+export function Faq() { return null; }
 
-/** One vertical rhythm for every section, so the page reads as a single column. */
-function Band({ id, eyebrow, title, lead, children }: {
-  id?: string; eyebrow: string; title: string; lead?: string; children: ReactNode;
-}) {
-  return (
-    <section id={id} className="shell scroll-mt-20 py-16 lg:py-20">
-      <div className="reveal mb-8 max-w-2xl">
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-accent">{eyebrow}</p>
-        <h2 className="mt-2 text-3xl font-semibold tracking-tight sm:text-[2.1rem]">{title}</h2>
-        {lead && <p className="mt-3 text-[15px] leading-relaxed text-muted">{lead}</p>}
-      </div>
-      {children}
-    </section>
-  );
+export function Band({ children }: { children: ReactNode }) {
+  return <>{children}</>;
 }

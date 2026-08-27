@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
-  ArchitectureSection, CallToAction, Capabilities, Faq, Hero, HowItWorks,
-  MarketingFooter, MarketingNav, Pricing, StatStrip,
+  CallToAction, Capabilities, Hero, HowItWorks, MarketingFooter, MarketingNav,
 } from "~/components/landing/Sections.tsx";
 import { useReveal } from "~/lib/useReveal.ts";
 
@@ -12,17 +11,12 @@ function Landing() {
   useReveal();
 
   return (
-    <div className="min-h-screen">
+    <div className="landing min-h-screen">
       <MarketingNav />
       <main>
         <Hero />
-        <StatStrip />
         <HowItWorks />
-        <div className="shell"><div className="rule" /></div>
         <Capabilities />
-        <ArchitectureSection />
-        <Pricing />
-        <Faq />
         <CallToAction />
       </main>
       <MarketingFooter />

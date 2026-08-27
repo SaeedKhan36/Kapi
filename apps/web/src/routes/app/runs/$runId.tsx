@@ -206,7 +206,7 @@ function RunHeader(props: {
       <div className="flex flex-wrap items-start justify-between gap-4 p-5">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-lg font-semibold leading-snug tracking-tight">{props.goal}</h1>
+            <h1 className="font-display text-xl font-bold leading-snug tracking-tight">{props.goal}</h1>
             <Badge status={props.status} />
           </div>
           <p className="mt-1.5 flex flex-wrap items-center gap-x-2 font-mono text-[11px] text-dim">
@@ -228,9 +228,9 @@ function RunHeader(props: {
       </div>
 
       {/* Progress as a rule under the header rather than another number. */}
-      <div className="h-0.5 w-full bg-line/40">
+      <div className="h-1.5 w-full bg-[#e7e5e4]">
         <div
-          className="h-full bg-accent transition-[width] duration-700 ease-out"
+          className="h-full bg-[#7dd3fc] transition-[width] duration-700 ease-out"
           style={{ width: `${pct}%` }}
         />
       </div>

@@ -18,7 +18,7 @@ export const Card = ({ className, children, ...props }:
   HTMLAttributes<HTMLDivElement> & { children: ReactNode }) => (
   <div
     className={cn(
-      "rounded-[var(--radius-card)] border border-line/60 bg-surface/60 backdrop-blur-sm",
+      "rounded-[var(--radius-card)] border-[1.5px] border-line bg-surface shadow-[4px_4px_0_#1c1917]",
       className,
     )}
     {...props}
@@ -46,7 +46,7 @@ export const Section = ({ title, action, children, className }: {
 export const EmptyState = ({ icon, title, hint }: {
   icon?: ReactNode; title: string; hint?: string;
 }) => (
-  <Card className="grid place-items-center gap-2 px-6 py-12 text-center">
+  <Card className="grid place-items-center gap-2 bg-[#fff8e7] px-6 py-12 text-center">
     {icon && <div className="text-dim">{icon}</div>}
     <p className="text-sm font-medium text-muted">{title}</p>
     {hint && <p className="max-w-xs text-xs text-dim">{hint}</p>}
@@ -61,23 +61,25 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const BUTTON_VARIANT = {
-  primary: "bg-accent text-accent-ink hover:brightness-110 active:brightness-95 shadow-[0_0_24px_-8px] shadow-accent/60",
-  secondary: "border border-line bg-raised/40 text-bright hover:border-accent/60 hover:bg-raised",
-  ghost: "text-muted hover:bg-raised/60 hover:text-bright",
+  primary:
+    "border-[1.5px] border-line bg-[#bae6fd] text-bright hover:bg-[#7dd3fc] hover:shadow-[3px_3px_0_#1c1917] hover:-translate-y-px active:translate-y-0 active:shadow-none",
+  secondary:
+    "border-[1.5px] border-line bg-[#fef08a] text-bright hover:bg-[#fde047] hover:shadow-[3px_3px_0_#1c1917] hover:-translate-y-px",
+  ghost: "text-muted hover:bg-raised hover:text-bright",
 } as const;
 
 const BUTTON_SIZE = {
-  sm: "h-8 px-3 text-xs gap-1.5",
-  md: "h-10 px-4 text-sm gap-2",
-  lg: "h-12 px-6 text-[0.95rem] gap-2",
+  sm: "h-8 px-3 text-xs gap-1.5 rounded-full",
+  md: "h-10 px-4 text-sm gap-2 rounded-full",
+  lg: "h-12 px-6 text-[0.95rem] gap-2 rounded-full",
 } as const;
 
 export const Button = ({ className, variant = "primary", size = "md", ...props }: ButtonProps) => (
   <button
     className={cn(
-      "inline-flex cursor-pointer items-center justify-center rounded-lg font-medium",
-      "transition-[background-color,border-color,filter,transform] duration-200",
-      "disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:saturate-0",
+      "inline-flex cursor-pointer items-center justify-center font-semibold",
+      "transition-[background-color,border-color,box-shadow,transform] duration-200",
+      "disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none disabled:translate-y-0",
       BUTTON_VARIANT[variant], BUTTON_SIZE[size], className,
     )}
     {...props}
@@ -87,13 +89,13 @@ export const Button = ({ className, variant = "primary", size = "md", ...props }
 /** The same surface as Button, for links. Anchors cannot be buttons. */
 export const buttonClass = (variant: keyof typeof BUTTON_VARIANT = "primary", size: keyof typeof BUTTON_SIZE = "md") =>
   cn(
-    "inline-flex cursor-pointer items-center justify-center rounded-lg font-medium transition-all duration-200",
+    "inline-flex cursor-pointer items-center justify-center font-semibold transition-all duration-200",
     BUTTON_VARIANT[variant], BUTTON_SIZE[size],
   );
 
 const FIELD_SURFACE =
-  "w-full rounded-lg border border-line/80 bg-well/60 px-3 py-2 text-sm text-bright transition-colors " +
-  "placeholder:text-dim/70 hover:border-line focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/40";
+  "w-full rounded-xl border-[1.5px] border-line bg-well px-3 py-2 text-sm text-bright transition-colors " +
+  "placeholder:text-dim/80 hover:bg-white focus:border-line focus:bg-white focus:outline-none focus:shadow-[3px_3px_0_#1c1917]";
 
 export const Input = ({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) => (
   <input className={cn(FIELD_SURFACE, "h-10", className)} {...props} />
@@ -118,7 +120,7 @@ export const Field = ({ label, hint, children }: {
 }) => (
   <label className="block">
     <span className="flex items-baseline gap-2">
-      <span className="text-sm font-medium text-bright">{label}</span>
+      <span className="text-sm font-semibold text-bright">{label}</span>
       {hint && <span className="text-xs text-dim">{hint}</span>}
     </span>
     <div className="mt-2">{children}</div>
@@ -128,25 +130,25 @@ export const Field = ({ label, hint, children }: {
 // -------------------------------------------------------------------- status
 
 const STATUS_TONE: Record<string, string> = {
-  review: "text-ok border-ok/30 bg-ok/10",
-  merged: "text-ok border-ok/30 bg-ok/10",
-  completed: "text-ok border-ok/30 bg-ok/10",
-  running: "text-accent border-accent/30 bg-accent/10",
-  planning: "text-accent border-accent/30 bg-accent/10",
-  assigned: "text-accent border-accent/30 bg-accent/10",
-  ready: "text-accent border-accent/30 bg-accent/10",
-  blocked: "text-warn border-warn/30 bg-warn/10",
-  completed_with_failures: "text-warn border-warn/30 bg-warn/10",
-  failed: "text-bad border-bad/30 bg-bad/10",
-  pending: "text-dim border-line bg-raised/40",
+  review: "text-bright border-line bg-[#bbf7d0]",
+  merged: "text-bright border-line bg-[#bbf7d0]",
+  completed: "text-bright border-line bg-[#bbf7d0]",
+  running: "text-bright border-line bg-[#bae6fd]",
+  planning: "text-bright border-line bg-[#e9d5ff]",
+  assigned: "text-bright border-line bg-[#bae6fd]",
+  ready: "text-bright border-line bg-[#dbeafe]",
+  blocked: "text-bright border-line bg-[#fef08a]",
+  completed_with_failures: "text-bright border-line bg-[#fef08a]",
+  failed: "text-bright border-line bg-[#fecaca]",
+  pending: "text-muted border-line bg-white",
 };
 
 const PULSING = new Set(["running", "planning", "assigned"]);
 
 export const Badge = ({ status, className }: { status: string; className?: string }) => (
   <span className={cn(
-    "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium",
-    STATUS_TONE[status] ?? "text-dim border-line bg-raised/40", className,
+    "inline-flex shrink-0 items-center gap-1.5 rounded-full border-[1.5px] px-2.5 py-0.5 text-[11px] font-semibold",
+    STATUS_TONE[status] ?? "text-muted border-line bg-white", className,
   )}>
     <span className={cn("size-1.5 rounded-full bg-current", PULSING.has(status) && "animate-pulse")} />
     {status.replace(/_/g, " ")}
@@ -154,19 +156,19 @@ export const Badge = ({ status, className }: { status: string; className?: strin
 );
 
 export const ROLE_TONE: Record<string, string> = {
-  frontend: "text-sky-300 bg-sky-400/10 border-sky-400/25",
-  backend: "text-violet-300 bg-violet-400/10 border-violet-400/25",
-  database: "text-amber-300 bg-amber-400/10 border-amber-400/25",
-  testing: "text-emerald-300 bg-emerald-400/10 border-emerald-400/25",
-  infra: "text-orange-300 bg-orange-400/10 border-orange-400/25",
-  docs: "text-pink-300 bg-pink-400/10 border-pink-400/25",
-  generalist: "text-slate-300 bg-slate-400/10 border-slate-400/25",
-  master: "text-accent bg-accent/10 border-accent/25",
+  frontend: "text-bright bg-[#bae6fd] border-line",
+  backend: "text-bright bg-[#e9d5ff] border-line",
+  database: "text-bright bg-[#fef08a] border-line",
+  testing: "text-bright bg-[#bbf7d0] border-line",
+  infra: "text-bright bg-[#fed7aa] border-line",
+  docs: "text-bright bg-[#fbcfe8] border-line",
+  generalist: "text-bright bg-white border-line",
+  master: "text-bright bg-[#c4b5fd] border-line",
 };
 
 export const RoleChip = ({ role, className }: { role: string; className?: string }) => (
   <span className={cn(
-    "rounded-md border px-1.5 py-0.5 text-[11px] font-medium",
+    "rounded-full border-[1.5px] px-2 py-0.5 text-[11px] font-semibold",
     ROLE_TONE[role] ?? ROLE_TONE.generalist, className,
   )}>
     {role}
@@ -187,8 +189,8 @@ export const Spinner = ({ className }: { className?: string }) => (
 /** Live / reconnecting, and anything else that is on or off. */
 export const Dot = ({ on, className }: { on: boolean; className?: string }) => (
   <span className={cn("relative flex size-2", className)}>
-    {on && <span className="absolute inline-flex size-full animate-ping rounded-full bg-ok/60" />}
-    <span className={cn("relative inline-flex size-2 rounded-full", on ? "bg-ok" : "bg-bad")} />
+    {on && <span className="absolute inline-flex size-full animate-ping rounded-full bg-[#86efac]" />}
+    <span className={cn("relative inline-flex size-2 rounded-full", on ? "bg-[#22c55e]" : "bg-[#ef4444]")} />
   </span>
 );
 
@@ -208,7 +210,10 @@ export function Tabs<T extends string>({ value, onChange, tabs, className }: {
   className?: string;
 }) {
   return (
-    <div role="tablist" className={cn("flex gap-1 rounded-lg border border-line/60 bg-well/50 p-1", className)}>
+    <div role="tablist" className={cn(
+      "flex gap-1 rounded-full border-[1.5px] border-line bg-white p-1 shadow-[3px_3px_0_#1c1917]",
+      className,
+    )}>
       {tabs.map((tab) => (
         <button
           key={tab.id}
@@ -216,8 +221,8 @@ export function Tabs<T extends string>({ value, onChange, tabs, className }: {
           aria-selected={value === tab.id}
           onClick={() => onChange(tab.id)}
           className={cn(
-            "flex-1 cursor-pointer rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-            value === tab.id ? "bg-raised text-bright" : "text-dim hover:text-muted",
+            "flex-1 cursor-pointer rounded-full px-3 py-1.5 text-xs font-semibold transition-colors",
+            value === tab.id ? "bg-[#bae6fd] text-bright" : "text-dim hover:text-bright",
           )}
         >
           {tab.label}
@@ -235,10 +240,10 @@ export const Notice = ({ tone = "warn", children }: {
   tone?: "warn" | "bad" | "accent"; children: ReactNode;
 }) => (
   <div className={cn(
-    "rounded-lg border px-3.5 py-2.5 text-sm",
-    tone === "bad" && "border-bad/30 bg-bad/10 text-bad",
-    tone === "warn" && "border-warn/30 bg-warn/10 text-warn",
-    tone === "accent" && "border-accent/30 bg-accent/10 text-accent",
+    "rounded-2xl border-[1.5px] border-line px-3.5 py-2.5 text-sm shadow-[3px_3px_0_#1c1917]",
+    tone === "bad" && "bg-[#fecaca] text-bright",
+    tone === "warn" && "bg-[#fef08a] text-bright",
+    tone === "accent" && "bg-[#bae6fd] text-bright",
   )}>
     {children}
   </div>

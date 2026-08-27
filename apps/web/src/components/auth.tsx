@@ -14,17 +14,17 @@ import { buttonClass, Spinner } from "./ui.tsx";
  * caller has to.
  */
 
-/** Clerk's own widgets, dressed in kapi's palette rather than its default light theme. */
+/** Clerk's own widgets, dressed in kapi's pastel palette. */
 const appearance = {
   variables: {
-    colorPrimary: "#67e8f9",
-    colorBackground: "#1a1d26",
-    colorForeground: "#f7f8fa",
-    colorInputBackground: "#14161d",
-    colorInputForeground: "#f7f8fa",
-    colorNeutral: "#f7f8fa",
-    fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
-    borderRadius: "0.625rem",
+    colorPrimary: "#7dd3fc",
+    colorBackground: "#fffdf8",
+    colorForeground: "#1c1917",
+    colorInputBackground: "#ffffff",
+    colorInputForeground: "#1c1917",
+    colorNeutral: "#1c1917",
+    fontFamily: "DM Sans, ui-sans-serif, system-ui, sans-serif",
+    borderRadius: "1rem",
   },
 } as const;
 

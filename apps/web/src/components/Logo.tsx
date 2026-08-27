@@ -3,10 +3,10 @@ import { cn } from "~/lib/cn.ts";
 /** The mark, used in both the marketing header and the app shell. */
 export const Logo = ({ className }: { className?: string }) => (
   <span className={cn("flex items-center gap-2.5", className)}>
-    <span className="grid size-7 place-items-center rounded-lg bg-gradient-to-br from-accent to-iris font-bold text-accent-ink">
+    <span className="grid size-7 place-items-center rounded-xl border-[1.5px] border-line bg-[#e9d5ff] font-display text-sm font-bold text-bright shadow-[2px_2px_0_#1c1917]">
       k
     </span>
-    <span className="text-[15px] font-semibold tracking-tight text-bright">kapi</span>
+    <span className="font-display text-[15px] font-semibold tracking-tight text-bright">kapi</span>
   </span>
 );
 

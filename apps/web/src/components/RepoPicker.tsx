@@ -65,7 +65,7 @@ export function RepoPicker({
 
   if (needsConnect) {
     return (
-      <div className="rounded-lg border border-line/60 bg-well/40 p-5 text-center">
+      <div className="rounded-2xl border-[1.5px] border-line bg-[#e0f2fe] p-5 text-center shadow-[3px_3px_0_#1c1917]">
         <p className="text-sm text-muted">Connect GitHub to choose a repository.</p>
         {/* Clerk collects the grant in its own account panel; WorkOS hands back
             a URL to redirect to. Offer whichever this deployment has. */}
@@ -82,7 +82,7 @@ export function RepoPicker({
 
   if (repos === null) {
     return (
-      <div className="flex items-center gap-2 rounded-lg border border-line/50 bg-well/30 px-3 py-3 text-sm text-dim">
+      <div className="flex items-center gap-2 rounded-2xl border-[1.5px] border-line bg-white px-3 py-3 text-sm text-dim">
         <Spinner /> Loading repositories…
       </div>
     );
@@ -119,7 +119,7 @@ export function RepoPicker({
         />
       </div>
 
-      <div className="max-h-56 divide-y divide-line/25 overflow-y-auto rounded-lg border border-line/60 bg-well/30">
+      <div className="max-h-56 divide-y divide-line/20 overflow-y-auto rounded-2xl border-[1.5px] border-line bg-white shadow-[3px_3px_0_#1c1917]">
         {visible.slice(0, 100).map((repo) => {
           const active = selected?.id === repo.id;
           return (
@@ -129,7 +129,7 @@ export function RepoPicker({
               onClick={() => void select(repo)}
               className={cn(
                 "flex w-full cursor-pointer items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors",
-                active ? "bg-accent/10 text-bright" : "text-muted hover:bg-raised/40 hover:text-bright",
+                active ? "bg-[#bae6fd] text-bright" : "text-muted hover:bg-[#fff8e7] hover:text-bright",
               )}
             >
               <span className="truncate">

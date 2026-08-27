@@ -2,6 +2,7 @@ import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ChevronDown, Inbox, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, ApiError, type Health, type Me } from "~/lib/api.ts";
+import { cn } from "~/lib/cn.ts";
 import { compact, timeAgo } from "~/lib/format.ts";
 import type { Run } from "~/lib/types.ts";
 import { AppShell } from "~/components/AppShell.tsx";
@@ -54,12 +55,12 @@ function Dashboard() {
     <AppShell>
       <div className="grid gap-10 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
         <section>
-          <h1 className="text-2xl font-semibold tracking-tight">Start a run</h1>
+          <h1 className="font-display text-3xl font-bold tracking-tight">Start a run</h1>
           <p className="mt-1.5 text-sm text-muted">
             One goal. The master plans it, the workers build it in parallel.
           </p>
 
-          <Card className="mt-6 p-6">
+          <Card className="mt-6 bg-[#fffdf8] p-6">
             <form onSubmit={submit} className="space-y-6">
               <Field label="Repository" hint="cloned, then branched from">
                 <RepoPicker value={repo} onChange={setRepo} connectUrl={me?.github.connectUrl} />
@@ -77,12 +78,12 @@ function Dashboard() {
 
               {/* Two knobs most runs never touch. Folded away so the form is
                   two decisions, not four. */}
-              <details className="group rounded-lg border border-line/50 bg-well/30">
-                <summary className="flex items-center justify-between px-3.5 py-2.5 text-xs font-medium text-muted transition-colors hover:text-bright">
+              <details className="group rounded-2xl border-[1.5px] border-line bg-white">
+                <summary className="flex items-center justify-between px-3.5 py-2.5 text-xs font-semibold text-muted transition-colors hover:text-bright">
                   Limits · {maxTasks} tasks · {concurrency} in parallel
                   <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
                 </summary>
-                <div className="grid grid-cols-2 gap-4 border-t border-line/40 p-3.5">
+                <div className="grid grid-cols-2 gap-4 border-t-[1.5px] border-line p-3.5">
                   <Field label="Max tasks" hint="plan size">
                     <Input
                       type="number" min={1} max={12} value={maxTasks}
@@ -128,10 +129,12 @@ function Dashboard() {
           </Card>
 
           {health && !health.llmConfigured && (
-            <Notice tone="warn">
-              No model key configured. Set <code className="font-mono">GEMINI_API_KEY</code> in{" "}
-              <code className="font-mono">.env</code> — free at aistudio.google.com/apikey.
-            </Notice>
+            <div className="mt-4">
+              <Notice tone="warn">
+                No model key configured. Set <code className="font-mono">GEMINI_API_KEY</code> in{" "}
+                <code className="font-mono">.env</code> — free at aistudio.google.com/apikey.
+              </Notice>
+            </div>
           )}
         </section>
 
@@ -155,13 +158,18 @@ function Dashboard() {
             />
           )}
 
-          <div className="space-y-2">
-            {runs && [...runs].reverse().map((run) => (
+          <div className="space-y-3">
+            {runs && [...runs].reverse().map((run, i) => (
               <Link
                 key={run.id}
                 to="/app/runs/$runId"
                 params={{ runId: run.id }}
-                className="block rounded-[var(--radius-card)] border border-line/60 bg-surface/50 p-4 transition-colors hover:border-accent/40 hover:bg-surface"
+                className={cn(
+                  "block rounded-[var(--radius-card)] border-[1.5px] border-line p-4 shadow-[3px_3px_0_#1c1917] transition-[transform,box-shadow] hover:-translate-y-0.5 hover:shadow-[5px_5px_0_#1c1917]",
+                  i % 3 === 0 && "bg-white",
+                  i % 3 === 1 && "bg-[#fef9c3]",
+                  i % 3 === 2 && "bg-[#e0f2fe]",
+                )}
               >
                 <div className="flex items-start justify-between gap-3">
                   <p className="line-clamp-2 text-sm leading-snug text-bright">{run.goal}</p>
