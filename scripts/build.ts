@@ -11,7 +11,8 @@
  * own. Everything in EXTERNAL stays outside the bundle and is expected in
  * node_modules at runtime.
  */
-import { build } from "esbuild";
+import { build, type BuildOptions } from "esbuild";
+import { pathToFileURL } from "node:url";
 
 /**
  * Everything is bundled except genuinely optional drivers.
@@ -42,44 +43,73 @@ import { build } from "esbuild";
 const EXTERNAL = ["@electric-sql/pglite", "drizzle-orm/pglite"];
 
 /**
- * The migrator ships alongside the server.
+ * Everything about the bundle except what goes into it.
  *
- * A release needs to apply migrations before the new code starts, and the
- * runtime image has no pnpm, no TypeScript and no node_modules. Bundling it
- * too means `node dist/migrate.mjs` is a complete release step.
+ * Exported so a test can build a probe with the real settings rather than a
+ * copy that drifts: the `inject` and `banner` below are load-bearing, and a
+ * test asserting against its own reconstruction of them would pass while
+ * production broke.
  */
-const result = await build({
-  entryPoints: {
-    orchestrator: "apps/orchestrator/src/index.ts",
-    migrate: "scripts/migrate.ts",
-  },
-  outdir: "dist",
-  outExtension: { ".js": ".mjs" },
+export const BUNDLE_OPTIONS = {
   bundle: true,
   platform: "node",
   target: "node22",
   format: "esm",
   external: EXTERNAL,
-  sourcemap: true,
+  // Pulls the packages that bundled third-party code require()s at runtime into
+  // the bundle. See scripts/bundled-requires.ts for why they need the help.
+  inject: ["scripts/bundled-requires.ts"],
   minify: false, // A readable stack trace is worth more than the kilobytes.
-  logLevel: "info",
   // esbuild emits ESM that references these; Node provides them for CJS only.
   banner: {
     js: [
       "import { createRequire as __createRequire } from 'node:module';",
       "import { fileURLToPath as __fileURLToPath } from 'node:url';",
       "import { dirname as __pathDirname } from 'node:path';",
-      "const require = __createRequire(import.meta.url);",
+      "const __nodeRequire = __createRequire(import.meta.url);",
+      // Bundled packages first, then the filesystem. Object.assign keeps
+      // require.resolve and friends, which callers reasonably expect to exist.
+      "const require = Object.assign(",
+      "  (id) => globalThis.__kapiBundledRequires?.[id] ?? __nodeRequire(id),",
+      "  __nodeRequire,",
+      ");",
       "const __filename = __fileURLToPath(import.meta.url);",
       "const __dirname = __pathDirname(__filename);",
     ].join("\n"),
   },
-});
+} as const satisfies BuildOptions;
 
-if (result.errors.length > 0) process.exit(1);
-console.log([
-  "",
-  "  dist/orchestrator.mjs   node dist/orchestrator.mjs",
-  "  dist/migrate.mjs        node dist/migrate.mjs --status",
-  "",
-].join("\n"));
+/**
+ * The migrator ships alongside the server.
+ *
+ * A release needs to apply migrations before the new code starts, and the
+ * runtime image has no pnpm, no TypeScript and no node_modules. Bundling it
+ * too means `node dist/migrate.mjs` is a complete release step.
+ */
+export const buildBundles = () =>
+  build({
+    ...BUNDLE_OPTIONS,
+    entryPoints: {
+      orchestrator: "apps/orchestrator/src/index.ts",
+      migrate: "scripts/migrate.ts",
+    },
+    outdir: "dist",
+    outExtension: { ".js": ".mjs" },
+    sourcemap: true,
+    logLevel: "info",
+  });
+
+// Importing this module for BUNDLE_OPTIONS must not also produce a build.
+const invokedDirectly =
+  !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (invokedDirectly) {
+  const result = await buildBundles();
+  if (result.errors.length > 0) process.exit(1);
+  console.log([
+    "",
+    "  dist/orchestrator.mjs   node dist/orchestrator.mjs",
+    "  dist/migrate.mjs        node dist/migrate.mjs --status",
+    "",
+  ].join("\n"));
+}
