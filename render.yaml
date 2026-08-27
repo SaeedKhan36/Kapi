@@ -15,7 +15,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: KAPI_AUTH_MODE
-        value: none
+        value: clerk
       - key: SANDBOX_PROVIDER
         value: daytona
       - key: KAPI_BUS
@@ -34,11 +34,18 @@ services:
         sync: false
       - key: GEMINI_API_KEY
         sync: false
-      - key: GITHUB_TOKEN
-        sync: false
       - key: DAYTONA_API_KEY
         sync: false
       - key: GROQ_API_KEY
         sync: false
       - key: CEREBRAS_API_KEY
+        sync: false
+      # Baked into the dashboard at Docker build time. Also required at runtime.
+      - key: CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: GITHUB_APP_ID
+        sync: false
+      - key: GITHUB_APP_PRIVATE_KEY
         sync: false

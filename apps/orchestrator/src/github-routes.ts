@@ -1,5 +1,5 @@
 import {
-  createRepoAccess, readAppConfig, GitHubAppRepoAccess, PatRepoAccess,
+  createRepoAccess, readAppConfig, GitHubAppRepoAccess, IdentityError,
   type RepoAccess, type SessionUser,
 } from "@kapi/identity";
 import type { Auth } from "./auth.ts";
@@ -12,12 +12,21 @@ import type { Auth } from "./auth.ts";
  * which repositories their owners have opened to Kapi. Only when both agree
  * does a run get a token, and even then only one scoped to a single repository.
  *
- * Without a login provider or without an App configured this degrades to the
- * PAT, which is what a single-operator deployment wants and what the CLI uses.
+ * Single-operator (no login provider) still uses the PAT. A signed-in
+ * deployment must not: falling back would let any session spend the operator
+ * token against the operator's repositories.
  */
 export async function repoAccessFor(auth: Auth, user: SessionUser): Promise<RepoAccess> {
+  if (!auth.identity) return createRepoAccess();
+
   const app = readAppConfig();
-  if (!auth.identity || !app) return createRepoAccess();
+  if (!app) {
+    throw new IdentityError(
+      "Set GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY. Multi-user mode cannot use the operator PAT.",
+      503,
+      "GITHUB_APP_NOT_CONFIGURED",
+    );
+  }
 
   // The human's own credential. Never reaches a sandbox - it is here to prove
   // they could have pushed themselves, and to attribute the pull request.
@@ -29,4 +38,4 @@ export async function repoAccessFor(auth: Auth, user: SessionUser): Promise<Repo
   });
 }
 
-export { PatRepoAccess };
+export { PatRepoAccess } from "@kapi/identity";

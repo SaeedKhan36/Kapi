@@ -7,6 +7,8 @@
  * feed. Both are exercised directly.
  */
 import { authMode, LOCAL_USER, providerAllowed } from "../apps/orchestrator/src/auth.ts";
+import { repoAccessFor } from "../apps/orchestrator/src/github-routes.ts";
+import { IdentityError } from "../packages/identity/src/index.ts";
 import { issuerFromPublishableKey } from "../packages/identity/src/clerk.ts";
 import { EventHub } from "../apps/orchestrator/src/events.ts";
 import { Store } from "../apps/orchestrator/src/store.ts";
@@ -133,6 +135,30 @@ const main = async () => {
   const own: string[] = [];
   hub.add({ runId: "run-a1", userId: "user-a", send: (d) => own.push(d) });
   check("replay still works for your own run", own.length === 1, `${own.length} replayed event(s)`);
+
+  console.log("\n\x1b[1mmulti-user must not use the operator PAT\x1b[0m\n");
+
+  const prevAppId = process.env.GITHUB_APP_ID;
+  const prevAppKey = process.env.GITHUB_APP_PRIVATE_KEY;
+  delete process.env.GITHUB_APP_ID;
+  delete process.env.GITHUB_APP_PRIVATE_KEY;
+  try {
+    await repoAccessFor(
+      { identity: { name: "clerk" } } as Parameters<typeof repoAccessFor>[0],
+      { id: "user-a" },
+    );
+    check("signed-in without a GitHub App is refused", false);
+  } catch (err) {
+    check(
+      "signed-in without a GitHub App is refused",
+      err instanceof IdentityError && err.code === "GITHUB_APP_NOT_CONFIGURED",
+    );
+  } finally {
+    if (prevAppId) process.env.GITHUB_APP_ID = prevAppId;
+    else delete process.env.GITHUB_APP_ID;
+    if (prevAppKey) process.env.GITHUB_APP_PRIVATE_KEY = prevAppKey;
+    else delete process.env.GITHUB_APP_PRIVATE_KEY;
+  }
 
   console.log(failures === 0 ? "\n\x1b[32mALL PASS\x1b[0m\n" : `\n\x1b[31m${failures} FAILED\x1b[0m\n`);
   process.exit(failures === 0 ? 0 : 1);
