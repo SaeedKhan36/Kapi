@@ -27,7 +27,7 @@ services:
       - key: ORCHESTRATOR_URL
         value: http://127.0.0.1:8787
       - key: MAX_CONCURRENT_WORKERS
-        value: "1"
+        value: "3"
       - key: MAX_CONCURRENT_RUNS
         value: "1"
       - key: DATABASE_URL
