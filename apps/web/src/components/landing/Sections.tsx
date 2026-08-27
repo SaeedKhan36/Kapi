@@ -35,13 +35,13 @@ export function MarketingNav() {
           ))}
         </nav>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2.5">
           <a
             href={REPO}
             target="_blank"
             rel="noreferrer"
             aria-label="kapi on GitHub"
-            className="hidden text-dim transition-colors hover:text-bright sm:block"
+            className="hidden size-10 place-items-center rounded-full border-[1.5px] border-line bg-white text-bright shadow-[2px_2px_0_#1c1917] transition-[transform,box-shadow,background-color] hover:-translate-y-px hover:bg-[#fef08a] hover:shadow-[3px_3px_0_#1c1917] sm:grid"
           >
             <GithubMark className="size-[18px]" />
           </a>
