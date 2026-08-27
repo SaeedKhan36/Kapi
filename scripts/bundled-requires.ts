@@ -15,14 +15,24 @@
  * the bundle - and registered under the name its consumer asks for. The
  * `require` shim in scripts/build.ts checks this table first.
  *
- * The Daytona SDK is the only consumer today. It uploads files as multipart and
- * loads `form-data` lazily on that path, so a missing copy surfaced not at
- * startup but on the first file an agent wrote to a sandbox.
+ * The Daytona SDK is the only consumer today, and it needs one module per
+ * direction of a file transfer - both loaded lazily, so neither surfaced at
+ * startup:
+ *
+ *   form-data  writeFile -> fs.uploadFile, which builds the multipart request
+ *   busboy     readFile  -> fs.downloadFile, which parses the multipart reply
+ *
+ * Fixing only the upload just moves the failure one call later: readFile is the
+ * very next thing an agent does. Add both, and prefer adding a module here over
+ * discovering it in production - the SDK reaches for `tar`, `fast-glob`,
+ * `expand-tilde` and `@iarna/toml` on paths kapi does not use today.
  */
 import FormData from "form-data";
+import busboy from "busboy";
 
 const BUNDLED: Record<string, unknown> = {
   "form-data": FormData,
+  busboy,
 };
 
 // Read by the banner's `require`, which is defined before this module runs and
