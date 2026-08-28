@@ -5,6 +5,7 @@ import {
 import type { ReactNode } from "react";
 import { useAuth } from "@clerk/react";
 import { authEnabled } from "~/lib/auth.ts";
+import { cn } from "~/lib/cn.ts";
 import { GithubMark, Logo } from "../Logo.tsx";
 
 const REPO = "https://github.com/SaeedKhan36/Kapi";
@@ -237,6 +238,175 @@ export function HowItWorks() {
             <p className="mt-2 text-sm leading-relaxed text-muted">{step.body}</p>
           </article>
         ))}
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------- product showcase
+
+/** Layered dashboard mockups — HealthMate-style composition, kapi pastel theme. */
+export function ProductShowcase() {
+  return (
+    <section className="shell scroll-mt-20 py-12 lg:py-16">
+      <div className="reveal mx-auto max-w-2xl text-center">
+        <span className="inline-flex items-center gap-2 rounded-full border border-line bg-[#dcfce7] px-3 py-1 text-xs font-semibold">
+          Inside the dashboard
+        </span>
+        <h2 className="font-display mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
+          Watch a run unfold in real time
+        </h2>
+        <p className="mt-3 text-muted">
+          Plan, parallel workers, and live activity — one screen, no context switching.
+        </p>
+      </div>
+
+      <div className="reveal relative mx-auto mt-12 max-w-5xl">
+        {/* soft backdrop blob */}
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-8 top-1/2 h-64 -translate-y-1/2 rounded-full bg-[#e9d5ff]/40 blur-3xl"
+        />
+
+        <div className="relative flex min-h-[28rem] items-center justify-center px-4 sm:min-h-[32rem]">
+          {/* left — compact run list (mobile-ish) */}
+          <div className="landing-card absolute left-0 top-8 z-10 hidden w-[11.5rem] rotate-[-6deg] bg-[#fef08a] p-3.5 sm:block lg:left-4 lg:w-[13rem]">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-bright/60">Recent runs</p>
+            <ul className="mt-3 space-y-2">
+              {[
+                { goal: "Add /health endpoint", tone: "bg-[#bae6fd]", active: true },
+                { goal: "Refactor auth middleware", tone: "bg-white", active: false },
+                { goal: "Ship dark mode toggle", tone: "bg-white", active: false },
+              ].map((run) => (
+                <li
+                  key={run.goal}
+                  className={cn(
+                    "rounded-xl border border-line px-2.5 py-2 text-[11px] font-medium leading-snug",
+                    run.tone,
+                    run.active && "ring-2 ring-line ring-offset-1",
+                  )}
+                >
+                  {run.goal}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* center — main run view */}
+          <div className="landing-card relative z-20 w-full max-w-2xl bg-white p-4 sm:p-5 lg:max-w-3xl">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b-[1.5px] border-line/20 pb-4">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-display text-base font-bold sm:text-lg">
+                    Add a /health endpoint
+                  </h3>
+                  <span className="rounded-full border border-line bg-[#bae6fd] px-2 py-0.5 text-[10px] font-semibold uppercase">
+                    running
+                  </span>
+                </div>
+                <p className="mt-1 font-mono text-[10px] text-dim">you/kapi · daytona sandbox</p>
+              </div>
+              <div className="flex gap-4 font-mono text-xs">
+                <div>
+                  <p className="font-bold text-bright">2/4</p>
+                  <p className="text-[10px] text-dim">tasks</p>
+                </div>
+                <div>
+                  <p className="font-bold text-bright">847</p>
+                  <p className="text-[10px] text-dim">calls</p>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="size-2 rounded-full bg-[#22c55e]" />
+                  <span className="text-[10px] text-dim">live</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-1 h-1.5 w-full rounded-full bg-[#e7e5e4]">
+              <div className="h-full w-1/2 rounded-full bg-[#7dd3fc]" />
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              {/* task graph mini */}
+              <div className="rounded-2xl border-[1.5px] border-line bg-[#fff8e7] p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-dim">Task graph</p>
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="grid size-5 place-items-center rounded-full border border-line bg-[#bae6fd] text-[9px] font-bold">1</span>
+                    <div className="flex-1 rounded-lg border border-line bg-[#dcfce7] px-2 py-1.5 text-[11px] font-medium">
+                      Plan API contract
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 pl-4">
+                    <span className="grid size-5 place-items-center rounded-full border border-line bg-[#bae6fd] text-[9px] font-bold">2</span>
+                    <div className="flex flex-1 gap-2">
+                      <div className="flex-1 rounded-lg border border-line bg-[#bae6fd] px-2 py-1.5 text-[11px] font-medium">
+                        Frontend
+                      </div>
+                      <div className="flex-1 rounded-lg border border-line bg-white px-2 py-1.5 text-[11px] font-medium">
+                        Backend
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* activity feed mini */}
+              <div className="rounded-2xl border-[1.5px] border-line bg-white p-3">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-dim">Activity</p>
+                <ul className="mt-3 space-y-2 text-[11px]">
+                  {[
+                    { tone: "text-[#15803d]", msg: "TASK_COMPLETED · frontend" },
+                    { tone: "text-[#0284c7]", msg: "API_READY · /health" },
+                    { tone: "text-[#a16207]", msg: "TASK_ASSIGNED · backend" },
+                  ].map((line) => (
+                    <li key={line.msg} className={cn("font-mono leading-snug", line.tone)}>
+                      {line.msg}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              {["frontend", "backend", "database"].map((role, i) => (
+                <span
+                  key={role}
+                  className={cn(
+                    "rounded-full border border-line px-2.5 py-0.5 text-[11px] font-semibold",
+                    i === 0 && "bg-[#bae6fd]",
+                    i === 1 && "bg-[#e9d5ff]",
+                    i === 2 && "bg-[#fef08a]",
+                  )}
+                >
+                  {role}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* right — booking-style CTA panel */}
+          <div className="landing-card absolute right-0 top-16 z-10 hidden w-[10.5rem] rotate-[5deg] bg-[#e9d5ff] p-3.5 sm:block lg:right-4 lg:w-52">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-bright/60">Start a run</p>
+            <div className="mt-3 rounded-xl border border-line bg-white p-2.5">
+              <p className="text-[11px] font-semibold">Goal</p>
+              <div className="mt-2 space-y-1">
+                <div className="h-1 w-full rounded-full bg-black/10" />
+                <div className="h-1 w-4/5 rounded-full bg-black/10" />
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1">
+              {["main", "4 tasks", "3 workers"].map((chip) => (
+                <span key={chip} className="rounded-full border border-line bg-[#fef08a] px-1.5 py-0.5 text-[9px] font-medium">
+                  {chip}
+                </span>
+              ))}
+            </div>
+            <div className="landing-btn-primary mt-3 !w-full !px-3 !py-2 text-center text-[11px]">
+              Start run
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   );

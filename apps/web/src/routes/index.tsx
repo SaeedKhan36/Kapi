@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import {
-  CallToAction, Capabilities, Hero, HowItWorks, MarketingFooter, MarketingNav,
+  CallToAction, Capabilities, Hero, HowItWorks, MarketingFooter, MarketingNav, ProductShowcase,
 } from "~/components/landing/Sections.tsx";
 import { useReveal } from "~/lib/useReveal.ts";
 
@@ -16,6 +16,7 @@ function Landing() {
       <main>
         <Hero />
         <HowItWorks />
+        <ProductShowcase />
         <Capabilities />
         <CallToAction />
       </main>
