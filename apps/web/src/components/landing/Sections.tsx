@@ -174,8 +174,10 @@ function HeroCollage() {
           <span className="rounded-full border border-line bg-[#dcfce7] px-2 py-0.5 text-[10px] font-semibold uppercase">Live</span>
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5">
+          {/* No worker count beside "planning": how many a run gets is decided
+              from the plan, which does not exist yet at this point. */}
           <span className="rounded-full border border-line bg-[#fef08a] px-2 py-0.5 text-[11px] font-medium">planning</span>
-          <span className="rounded-full border border-line bg-[#bae6fd] px-2 py-0.5 text-[11px] font-medium">3 workers</span>
+          <span className="rounded-full border border-line bg-[#bae6fd] px-2 py-0.5 text-[11px] font-medium">4 tasks</span>
           <span className="rounded-full border border-line bg-[#e9d5ff] px-2 py-0.5 text-[11px] font-medium">daytona</span>
         </div>
       </div>
@@ -257,7 +259,8 @@ export function ProductShowcase() {
           Watch a run unfold in real time
         </h2>
         <p className="mt-3 text-muted">
-          Plan, parallel workers, and live activity — one screen, no context switching.
+          The task graph, the contract, the agents — and every message they send,
+          streaming into one page while the run works.
         </p>
       </div>
 
@@ -312,7 +315,9 @@ export function ProductShowcase() {
                   <p className="text-[10px] text-dim">tasks</p>
                 </div>
                 <div>
-                  <p className="font-bold text-bright">847</p>
+                  {/* A real number: MAX_LLM_REQUESTS_PER_RUN caps a run at 60,
+                      and runs of this size land between 9 and 20. */}
+                  <p className="font-bold text-bright">17</p>
                   <p className="text-[10px] text-dim">calls</p>
                 </div>
                 <div className="flex items-center gap-1.5">
@@ -396,7 +401,7 @@ export function ProductShowcase() {
               </div>
             </div>
             <div className="mt-2 flex flex-wrap gap-1">
-              {["main", "4 tasks", "3 workers"].map((chip) => (
+              {["main", "4 tasks", "daytona"].map((chip) => (
                 <span key={chip} className="rounded-full border border-line bg-[#fef08a] px-1.5 py-0.5 text-[9px] font-medium">
                   {chip}
                 </span>
