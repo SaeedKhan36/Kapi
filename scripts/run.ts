@@ -119,7 +119,8 @@ ${C.bold("usage")}: pnpm run:agent --repo=<git-url> --goal="<what to build>"
     const { runId, outcomes } = await engine.execute({
       goal, repoUrl,
       baseBranch: arg("branch", "main"),
-      maxConcurrency: Number(arg("concurrency", "4")),
+      // Absent unless asked for, so the master sizes the run from its own plan.
+      maxConcurrency: arg("concurrency") ? Number(arg("concurrency")) : undefined,
       maxTasks: arg("max-tasks") ? Number(arg("max-tasks")) : undefined,
       providerName: provider,
       planOnly: flag("dry-plan"),

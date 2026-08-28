@@ -27,7 +27,9 @@ const CreateRunSchema = z.object({
   goal: z.string().min(5),
   repoUrl: z.string().url(),
   baseBranch: z.string().default("main"),
-  maxConcurrency: z.number().int().min(1).max(16).default(4),
+  // Optional on purpose: omitted, the engine sizes the run from the plan the
+  // master produced. A caller that names a number gets it, clamped.
+  maxConcurrency: z.number().int().min(1).max(16).optional(),
   maxTasks: z.number().int().min(1).max(12).optional(),
   providerName: z.enum(["local", "docker", "daytona"]).optional(),
 });

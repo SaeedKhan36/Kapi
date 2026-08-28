@@ -65,7 +65,9 @@ export function TaskGraphView({ tasks }: { tasks: Task[] }) {
               {i + 1}
             </span>
             <span className="text-[11px] uppercase tracking-widest text-dim">
-              {level.length > 1 ? `${level.length} in parallel` : "single task"}
+              {/* "independent", not "in parallel": how many of these actually
+                  run together is the run's worker budget, not the level size. */}
+              {level.length > 1 ? `${level.length} independent` : "single task"}
             </span>
             <div className="h-px flex-1 bg-line/30" />
           </div>

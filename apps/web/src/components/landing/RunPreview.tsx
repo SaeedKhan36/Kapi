@@ -17,8 +17,10 @@ const TASKS = [
 ] as const;
 
 const FEED = [
-  { at: 2, from: "database", to: "backend", type: "SCHEMA_READY", text: "orders(id, total_cents, status)" },
-  { at: 3, from: "backend", to: "frontend", type: "API_READY", text: "POST /api/checkout → { url }" },
+  // Addressed as the engine addresses them: these land as broadcasts on the
+  // run's bus, not as a private line from one worker to another.
+  { at: 2, from: "database", to: "broadcast", type: "SCHEMA_READY", text: "orders(id, total_cents, status)" },
+  { at: 3, from: "backend", to: "broadcast", type: "API_READY", text: "POST /api/checkout → { url }" },
   { at: 5, from: "testing", to: "master", type: "TASK_COMPLETED", text: "4 specs pass on kapi/testing" },
 ] as const;
 

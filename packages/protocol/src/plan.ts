@@ -119,6 +119,44 @@ export function validateTaskGraph(graph: TaskGraph): GraphProblem[] {
 }
 
 /**
+ * The widest level of the plan: how many of its tasks are independent enough
+ * to be worked at the same time.
+ *
+ * Levels are longest-path depth, the same grouping the dashboard draws, so the
+ * number the engine provisions for and the number a reader counts on screen
+ * come from one definition rather than two that drift.
+ *
+ * This is what a plan can use, not a promise about what it gets - the
+ * deployment ceiling still applies, and a level only runs as wide as its
+ * predecessors finishing allows.
+ */
+export function planWidth(tasks: PlannedTask[]): number {
+  if (tasks.length === 0) return 0;
+
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const depth = new Map<string, number>();
+
+  const resolve = (id: string, seen = new Set<string>()): number => {
+    const known = depth.get(id);
+    if (known !== undefined) return known;
+    if (seen.has(id)) return 0;              // cycles are rejected upstream
+    seen.add(id);
+    const task = byId.get(id);
+    const deps = task?.dependsOn.filter((d) => byId.has(d)) ?? [];
+    const d = deps.length === 0 ? 0 : 1 + Math.max(...deps.map((p) => resolve(p, seen)));
+    depth.set(id, d);
+    return d;
+  };
+
+  const sizes = new Map<number, number>();
+  for (const t of tasks) {
+    const d = resolve(t.id);
+    sizes.set(d, (sizes.get(d) ?? 0) + 1);
+  }
+  return Math.max(...sizes.values());
+}
+
+/**
  * Cuts a plan down to at most `limit` tasks, keeping a set that is closed
  * under its own dependencies.
  *

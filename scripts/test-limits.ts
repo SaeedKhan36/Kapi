@@ -10,7 +10,7 @@
 import {
   clampTasks, clampWorkers, RateLimiter, RunAdmission, taskCeiling, workerCeiling,
 } from "../apps/orchestrator/src/limits.ts";
-import { trimToTaskLimit, type PlannedTask } from "../packages/protocol/src/index.ts";
+import { planWidth, trimToTaskLimit, type PlannedTask } from "../packages/protocol/src/index.ts";
 import { LocalProvider, SandboxLimiter, SandboxLimitError, withSandboxLimit } from "../packages/sandbox/src/index.ts";
 
 let failures = 0;
@@ -239,6 +239,16 @@ const main = async () => {
     const fromCycle = trimToTaskLimit(cyclic, 2);
     check("a cyclic plan terminates instead of spinning",
       fromCycle.kept.map((t) => t.id).join(",") === "c", fromCycle.kept.map((t) => t.id).join(","));
+
+    // What the run is sized from when the caller names no number.
+    check("a chain can only ever use one worker",
+      planWidth([task("a"), task("b", ["a"]), task("c", ["b"])]) === 1,
+      String(planWidth([task("a"), task("b", ["a"]), task("c", ["b"])])));
+    check("independent tasks widen it", planWidth([task("a"), task("b"), task("c")]) === 3,
+      String(planWidth([task("a"), task("b"), task("c")])));
+    check("width is the widest level, not the task count", planWidth(plan) === 2,
+      `${planWidth(plan)} for db,api,ui,docs`);
+    check("an empty plan has no width", planWidth([]) === 0, String(planWidth([])));
   }
 
   console.log(failures === 0 ? "\n\x1b[32mALL PASS\x1b[0m\n" : `\n\x1b[31m${failures} FAILED\x1b[0m\n`);

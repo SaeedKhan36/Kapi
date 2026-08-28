@@ -71,7 +71,11 @@ including ports and the free-tier budget caps.
    `dependsOn` edges, each assigned a role (`frontend`, `backend`, `database`,
    `testing`, `infra`, `docs`, `generalist`).
 2. **Schedule.** The orchestrator walks the DAG, running every task whose
-   dependencies are terminal, up to `maxConcurrency`.
+   dependencies are terminal. How many run at once comes from the plan itself —
+   the widest level of the graph, since a chain of five tasks cannot use five
+   workers — bounded by `MAX_CONCURRENT_WORKERS`. A caller may name a number
+   instead with `maxConcurrency`; it is clamped the same way. The run announces
+   what it settled on and why.
 3. **Implement.** Each worker gets a fresh sandbox, a clone on its own branch,
    and the coding engine loop. Tasks move `pending → ready → assigned → running
    → review | blocked | failed`.
@@ -234,7 +238,7 @@ to, and it is a plain HTTP + WebSocket surface you can drive yourself.
 | `GET /api/github/repos/:owner/:repo/authorization` | whether a run here would be allowed, and how to fix it if not |
 | `GET /api/runs` | the caller's runs |
 | `GET /api/runs/:id` | one run with its tasks, agents, messages, artifacts |
-| `POST /api/runs` | start a run — `{ goal, repoUrl, baseBranch?, maxConcurrency?, maxTasks?, providerName? }`; `429` when rate-limited or at the concurrent-run cap |
+| `POST /api/runs` | start a run — `{ goal, repoUrl, baseBranch?, maxConcurrency?, maxTasks?, providerName? }` (omit `maxConcurrency` and the plan sizes the run); `429` when rate-limited or at the concurrent-run cap |
 | `POST /api/ws-tickets` | `{ ticket, expiresInSeconds }` — short-lived handle for the live feed |
 | `WS /ws?runId=…&ticket=…` | live `status` / `plan` / `task` / `message` events |
 
@@ -260,7 +264,7 @@ pnpm run:agent --repo=<git-url> --goal="<what to build>"
 
   --provider=local|docker|daytona   sandbox backend (default: $SANDBOX_PROVIDER or local)
   --branch=main                     base branch
-  --concurrency=4                   max parallel workers
+  --concurrency=4                   override the workers the plan asks for
   --max-tasks=6                     cap the plan size
   --dry-plan                        plan only, do not run workers
 ```

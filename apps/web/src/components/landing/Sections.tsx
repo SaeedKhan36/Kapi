@@ -196,7 +196,7 @@ const STEPS = [
   {
     n: "02",
     title: "Run in parallel",
-    body: "Every ready task gets its own sandbox and branch. Workers talk as interfaces land.",
+    body: "Every ready task gets its own sandbox and branch, and announces on the bus what it landed.",
     tone: "bg-[#fef08a]",
     icon: Layers,
   },
@@ -445,7 +445,7 @@ export function Capabilities() {
             and watch the plan come back while workers build in parallel.
           </p>
           <ul className="mt-6 space-y-3">
-            {["Infinite parallel waves", "Git-native branches and PRs", "Works on free Gemini + Neon + Daytona"].map((item) => (
+            {["Parallel waves, sized to the plan", "Git-native branches and PRs", "Works on free Gemini + Neon + Daytona"].map((item) => (
               <li key={item} className="flex items-center gap-3 text-sm font-medium">
                 <span className="grid size-6 place-items-center rounded-full border border-line bg-[#bae6fd]">
                   <Check className="size-3.5" strokeWidth={3} />

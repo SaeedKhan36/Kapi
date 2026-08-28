@@ -18,7 +18,6 @@ function Dashboard() {
   const [goal, setGoal] = useState("");
   const [repo, setRepo] = useState<RepoSelection>({ repoUrl: "", baseBranch: "main" });
   const [maxTasks, setMaxTasks] = useState(4);
-  const [concurrency, setConcurrency] = useState(3);
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [me, setMe] = useState<Me | null>(null);
@@ -30,9 +29,8 @@ function Dashboard() {
     api.health()
       .then((h) => {
         setHealth(h);
-        // The engine clamps to these anyway. Bringing the form down to them
-        // means the numbers shown are the numbers that run.
-        if (h.limits?.maxWorkers) setConcurrency((c) => Math.min(c, h.limits!.maxWorkers));
+        // The engine clamps to this anyway. Bringing the form down to it means
+        // the number shown is the number that runs.
         if (h.limits?.maxTasks) setMaxTasks((t) => Math.min(t, h.limits!.maxTasks));
       })
       .catch(() => setHealth(null));
@@ -49,7 +47,8 @@ function Dashboard() {
         repoUrl: repo.repoUrl,
         baseBranch: repo.baseBranch,
         maxTasks,
-        maxConcurrency: concurrency,
+        // Deliberately not sent: how many sandboxes to run at once is the
+        // master's call, made from the shape of the plan it produces.
       });
       navigate({ to: "/app/runs/$runId", params: { runId } });
     } catch (err) {
@@ -59,10 +58,10 @@ function Dashboard() {
     }
   };
 
-  // Until health answers, offer the schema's own ceilings rather than guessing
+  // Until health answers, offer the schema's own ceiling rather than guessing
   // low - a deployment that allows more should not look like one that does not.
-  const maxWorkers = health?.limits?.maxWorkers ?? 8;
   const taskCeiling = health?.limits?.maxTasks ?? 12;
+  const maxWorkers = health?.limits?.maxWorkers;
 
   return (
     <AppShell>
@@ -93,10 +92,10 @@ function Dashboard() {
                   two decisions, not four. */}
               <details className="group rounded-2xl border-[1.5px] border-line bg-white">
                 <summary className="flex items-center justify-between px-3.5 py-2.5 text-xs font-semibold text-muted transition-colors hover:text-bright">
-                  Limits · {maxTasks} tasks · {concurrency} in parallel
+                  Limits · at most {maxTasks} tasks
                   <ChevronDown className="size-3.5 transition-transform group-open:rotate-180" />
                 </summary>
-                <div className="grid grid-cols-2 gap-4 border-t-[1.5px] border-line p-3.5">
+                <div className="space-y-3 border-t-[1.5px] border-line p-3.5">
                   <Field label="Max tasks" hint={`plan size · max ${taskCeiling}`}>
                     <Input
                       type="number" min={1} max={taskCeiling} value={maxTasks}
@@ -105,14 +104,14 @@ function Dashboard() {
                       }
                     />
                   </Field>
-                  <Field label="Workers" hint={`sandboxes at once · max ${maxWorkers}`}>
-                    <Input
-                      type="number" min={1} max={maxWorkers} value={concurrency}
-                      onChange={(e) =>
-                        setConcurrency(Math.min(Math.max(1, Number(e.target.value)), maxWorkers))
-                      }
-                    />
-                  </Field>
+                  {/* Not a knob. How many sandboxes run at once falls out of the
+                      plan - a chain of five tasks cannot use five workers - so
+                      the master decides it and the run says what it decided. */}
+                  <p className="text-xs text-muted">
+                    <span className="font-semibold text-bright">Workers</span>{" "}
+                    are chosen by the master from the shape of the plan
+                    {maxWorkers ? `, up to ${maxWorkers} sandbox${maxWorkers === 1 ? "" : "es"} at once on this deployment` : ""}.
+                  </p>
                 </div>
               </details>
 

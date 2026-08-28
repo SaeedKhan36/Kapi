@@ -32,7 +32,7 @@ export function Architecture() {
         title="Master + workers"
       >
         <Line>Master reads the repo read-only and emits the task graph</Line>
-        <Line>Workers implement in parallel and message each other directly</Line>
+        <Line>Workers implement against one shared contract, one sandbox each</Line>
         <div className="flex flex-wrap gap-1 pt-1">
           {ROLES.map((role) => <RoleChip key={role} role={role} />)}
         </div>

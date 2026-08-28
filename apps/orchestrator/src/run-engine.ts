@@ -4,7 +4,7 @@ import { createCodingEngine, type CodingEngine } from "@kapi/agent-engine";
 import { decideRecovery, planFromSandbox } from "@kapi/agent-runtime";
 import { createLLM, type RoutedLLM } from "@kapi/llm";
 import type { AgentMessage, PlannedTask, RecoveryDecision, TaskGraph } from "@kapi/protocol";
-import { detach, remapDependencies, trimToTaskLimit, workerId } from "@kapi/protocol";
+import { detach, planWidth, remapDependencies, trimToTaskLimit, workerId } from "@kapi/protocol";
 import {
   cloneRepo, createRemoteBranch, createSandboxProvider, integrationBranch, isEmptyRepo,
   mergeIntoIntegration, seedEmptyRepo, taskBranch, type ProviderName, type SandboxProvider,
@@ -154,10 +154,6 @@ export class RunEngine {
     const runId = randomUUID().slice(0, 8);
     const baseBranch = req.baseBranch ?? "main";
     const provider = (this.opts.createProvider ?? createSandboxProvider)(req.providerName);
-    // Clamped, not defaulted: MAX_CONCURRENT_WORKERS is what this deployment is
-    // willing to pay for, so a caller may ask for fewer workers than it allows
-    // and never for more.
-    const maxConcurrency = clampWorkers(req.maxConcurrency, workerCeiling());
     const idleTtlSeconds = Number(process.env.SANDBOX_IDLE_TTL_SECONDS ?? 900);
 
     await this.store.createRun({
@@ -209,7 +205,8 @@ export class RunEngine {
       }
 
       await this.#schedule(runId, req, graph, provider, llm, master, outcomes, {
-        baseBranch: integrationBranch(runId), maxConcurrency, idleTtlSeconds,
+        baseBranch: integrationBranch(runId), idleTtlSeconds,
+        maxConcurrency: await this.#workersFor(req, graph, master),
       });
 
       await this.#openPullRequests(runId, req, graph, outcomes, baseBranch);
@@ -385,6 +382,38 @@ export class RunEngine {
         dir: "repo",
       });
     }
+  }
+
+  /**
+   * Decides how many sandboxes this run gets, and says so.
+   *
+   * The plan is the master's, so the shape of the plan is the master's answer:
+   * a chain of five tasks can only ever be worked one at a time, and
+   * provisioning eight workers for it would be a number with nothing behind
+   * it. The widest level of the graph is what the run can actually use.
+   *
+   * An explicit `maxConcurrency` from the caller still wins - the CLI passes
+   * one deliberately - but it is clamped like everything else. Either way the
+   * deployment ceiling is the last word.
+   */
+  async #workersFor(req: RunRequest, graph: TaskGraph, master: AgentChannel): Promise<number> {
+    const ceiling = workerCeiling();
+    const width = Math.max(1, planWidth(graph.tasks));
+    const decided = req.maxConcurrency !== undefined
+      ? clampWorkers(req.maxConcurrency, ceiling)
+      : Math.min(width, ceiling);
+
+    const why = req.maxConcurrency !== undefined && decided < req.maxConcurrency
+      ? `asked for ${req.maxConcurrency}, capped at ${ceiling} by this deployment`
+      : decided < width
+        ? `the plan could use ${width}, capped at ${ceiling} by this deployment`
+        : `the widest step of the plan is ${width} task(s)`;
+
+    await master.send("broadcast", "PLAN_READY",
+      `running up to ${decided} worker(s) at once - ${why}`,
+      { dependsOn: graph.tasks.map((t) => t.id) });
+
+    return decided;
   }
 
   /**

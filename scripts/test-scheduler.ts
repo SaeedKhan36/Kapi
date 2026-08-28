@@ -65,7 +65,7 @@ class StubProvider extends LocalProvider {
   }
 }
 
-const run = async (failTasks: Set<string> = new Set()) => {
+const run = async (failTasks: Set<string> = new Set(), maxConcurrency?: number) => {
   // Ephemeral database: the scheduler is what is under test, and sharing the
   // development PGlite directory corrupts it.
   const db = await createDb("memory");
@@ -83,7 +83,7 @@ const run = async (failTasks: Set<string> = new Set()) => {
   });
 
   const { runId, outcomes } = await runEngine.execute({
-    goal: graph.goal, repoUrl: "https://example.invalid/repo.git", maxConcurrency: 4,
+    goal: graph.goal, repoUrl: "https://example.invalid/repo.git", maxConcurrency,
   });
   await bus.close();
   return { runId, outcomes, engine, messages, store };
@@ -93,7 +93,7 @@ const main = async () => {
   console.log("\n\x1b[1mscheduler\x1b[0m\n");
 
   // --- happy path -------------------------------------------------------
-  const a = await run();
+  const a = await run(new Set(), 4);
   const order = a.engine.order;
   check("all 4 tasks ran", order.length === 4, order.join(" -> "));
   check("db-schema before api", order.indexOf("db-schema") < order.indexOf("api"), order.join(" -> "));
@@ -113,9 +113,25 @@ const main = async () => {
   check("SCHEMA_READY broadcast by database worker", msgs.some((m) => m.type === "SCHEMA_READY"));
   check("API_READY broadcast by backend worker", msgs.some((m) => m.type === "API_READY"));
 
+  // --- the master sizes the run when nobody asks for a number ----------
+  console.log("\n\x1b[1mworkers chosen from the plan\x1b[0m\n");
+
+  {
+    // The graph is two levels wide at most (db-schema and docs), so a run that
+    // names no concurrency should provision two workers, not one per task.
+    const c = await run();
+    check("every task still runs", c.engine.order.length === 4, c.engine.order.join(" -> "));
+    check("the plan's width is used", c.engine.peakConcurrency === 2,
+      `peak=${c.engine.peakConcurrency}`);
+
+    const cMsgs = await c.store.listMessages(c.runId);
+    const said = cMsgs.find((m) => m.content.includes("running up to"));
+    check("the run says what it decided", Boolean(said), said?.content ?? "no such message");
+  }
+
   // --- failure propagation ---------------------------------------------
   console.log("\n\x1b[1mfailure propagation\x1b[0m\n");
-  const b = await run(new Set(["api"]));
+  const b = await run(new Set(["api"]), 4);
   const bTasks = await b.store.listTasks(b.runId);
   const status = Object.fromEntries(bTasks.map((t) => [t.taskId, t.status]));
 
